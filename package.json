@@ -1,0 +1,54 @@
+{
+  "name": "memory-store-skill",
+  "version": "0.0.1",
+  "description": "Conversation memory skill for multi-agent AI workflows — store, share, and recall across sessions and agents",
+  "keywords": [
+    "memory",
+    "agent",
+    "ai",
+    "claude",
+    "skill",
+    "conversation",
+    "llm",
+    "multi-agent",
+    "memory-store",
+    "codex",
+    "claude-code",
+    "opencode",
+    "antigravity",
+    "cursor",
+    "windsurf",
+    "gemini",
+    "cline",
+    "roo"
+  ],
+  "homepage": "https://github.com/Revolves/memory-store-skill",
+  "bugs": "https://github.com/Revolves/memory-store-skill/issues",
+  "license": "MIT",
+  "author": "xws",
+  "bin": {
+    "memory-store": "scripts/memory_cli.js",
+    "memory-store-install": "scripts/install.js"
+  },
+  "files": [
+    "SKILL.md",
+    "scripts/memory_cli.js",
+    "scripts/install.js",
+    "scripts/postinstall.js",
+    "references/memory_schema.json",
+    "examples/example_memories.json"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Revolves/memory-store-skill.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
