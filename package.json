@@ -1,6 +1,6 @@
 {
   "name": "memory-store-skill",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Conversation memory skill for multi-agent AI workflows — store, share, and recall across sessions and agents",
   "keywords": [
     "memory",
