@@ -60,4 +60,16 @@ A lightweight conversation memory skill for multi-agent AI workflows.
 
 ---
 
+## 快速入门 · Quick Start
+
+- **新手？** 先看 [5 分钟快速开始](README.zh.md#5-快速开始5-分钟)（中文） / [5-min Quick Start](README.en.md#5-quick-start-5-minutes)（English）
+- **查命令？** 看 [CHEATSHEET.md](CHEATSHEET.md) — 一页纸速查表
+- **遇问题？** 查 [FAQ.md](FAQ.md) — 22 个常见问题
+
+## 常见问题 · FAQ
+
+遇到问题先查 [FAQ.md](FAQ.md) — 覆盖 22 个常见问题，从基础概念到排障安装。
+
+---
+
 <sub>Memory Store Skill · 面向 AI Agent 工作场景的记忆管理 · Memory management for AI agent workflows</sub>

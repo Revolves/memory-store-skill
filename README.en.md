@@ -14,8 +14,10 @@
 2. [Features](#2-features)
 3. [Architecture](#3-architecture)
 4. [Installation](#4-installation)
-5. [Usage](#5-usage)
-6. [Project Structure](#6-project-structure)
+5. [Quick Start (5 minutes)](#5-quick-start-5-minutes)
+6. [Usage](#6-usage)
+7. [Project Structure](#7-project-structure)
+8. [FAQ](FAQ.md) — Quick answers
 
 ---
 
@@ -116,7 +118,46 @@ Restart the session after installation. Script paths are relative to the skill d
 
 ---
 
-## 5. Usage
+## 5. Quick Start (5 minutes)
+
+> New to Memory Store? This section covers the minimal flow. Full details in the sections below.
+
+### Step 1: Store a memory
+
+```bash
+node scripts/memory_cli.js store \
+  --type fact \
+  --title "Project tech stack" \
+  --summary "Frontend React, backend Node.js, database SQLite" \
+  --tags "tech-stack,project" \
+  --importance 0.7 \
+  --scope global
+```
+
+### Step 2: Search memories
+
+```bash
+node scripts/memory_cli.js search \
+  --query "tech stack" \
+  --scope all \
+  --limit 5 \
+  --output result.json
+```
+
+### Step 3: View results
+
+```bash
+cat result.json    # View the search results
+```
+
+> ✅ **Done!** You've completed the basic store → search → view flow. Next:
+> - Explore all commands in [Usage](#6-usage)
+> - Read the core rules in [SKILL.md](SKILL.md)
+> - Check [FAQ.md](FAQ.md) when stuck
+
+---
+
+## 6. Usage
 
 ### 5.1 CLI Commands
 
@@ -169,8 +210,10 @@ The skill is designed for **agent-driven usage**: the agent decides in-conversat
 
 ```
 memory-store/
+├── CHEATSHEET.md                  # CLI quick reference (one-pager)
 ├── SKILL.md                      # Skill instruction core (triggers + agent behavior rules)
 ├── README.md / README.en.md      # This document (English)
+├── FAQ.md                        # Frequently asked questions
 ├── scripts/
 │   ├── memory_cli.js             # Core CLI (11 commands, pure Node built-ins)
 │   └── install.js                # Auto-installer (detect agents + install)

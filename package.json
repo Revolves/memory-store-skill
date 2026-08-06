@@ -32,6 +32,8 @@
   },
   "files": [
     "SKILL.md",
+    "CHEATSHEET.md",
+    "FAQ.md",
     "scripts/memory_cli.js",
     "scripts/install.js",
     "scripts/postinstall.js",

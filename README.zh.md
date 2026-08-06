@@ -14,8 +14,10 @@
 2. [核心特性](#2-核心特性)
 3. [架构概览](#3-架构概览)
 4. [安装部署](#4-安装部署)
-5. [使用方式](#5-使用方式)
-6. [目录结构](#6-目录结构)
+5. [快速开始（5 分钟）](#5-快速开始5-分钟)
+6. [使用方式](#6-使用方式)
+7. [目录结构](#7-目录结构)
+8. [常见问题](FAQ.md) — 快速查答案
 
 ---
 
@@ -116,7 +118,46 @@ cp -r memory-store .agents/skills/          # 项目级
 
 ---
 
-## 5. 使用方式
+## 5. 快速开始（5 分钟）
+
+> 新手先看这里——只讲最核心的流程，完整功能介绍见后续章节。
+
+### 第 1 步：存储一条记忆
+
+```bash
+node scripts/memory_cli.js store \
+  --type fact \
+  --title "项目技术栈" \
+  --summary "前端 React，后端 Node.js，数据库 SQLite" \
+  --tags "tech-stack,project" \
+  --importance 0.7 \
+  --scope global
+```
+
+### 第 2 步：检索记忆
+
+```bash
+node scripts/memory_cli.js search \
+  --query "技术栈" \
+  --scope all \
+  --limit 5 \
+  --output result.json
+```
+
+### 第 3 步：查看结果
+
+```bash
+cat result.json    # 查看检索结果
+```
+
+> ✅ **完成！** 你已经完成了记忆的存、查、用全流程。接下来可以：
+> - 了解 [使用方式](#6-使用方式) 的全部命令
+> - 阅读 [SKILL.md](SKILL.md) 核心规则
+> - 遇到问题查 [FAQ.md](FAQ.md)
+
+---
+
+## 6. 使用方式
 
 ### 5.1 CLI 子命令
 
@@ -169,8 +210,10 @@ memory-store archive --scope all --apply-decay --min-decay 0.15 --output a.json
 
 ```
 memory-store/
+├── CHEATSHEET.md                  # CLI 速查表（一页纸）
 ├── SKILL.md                      # 技能指令核心（触发词 + Agent 行为规则）
 ├── README.md / README.zh.md      # 本文档（中文版）
+├── FAQ.md                        # 常见问题解答
 ├── scripts/
 │   ├── memory_cli.js             # 核心 CLI（11 子命令，纯 Node 内置模块）
 │   └── install.js                # 自动安装脚本（检测 Agent 平台 + 安装）

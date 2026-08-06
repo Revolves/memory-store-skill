@@ -17,6 +17,17 @@ Extracts, compresses, and indexes reusable knowledge from conversations so the
 agent can recall relevant context in future interactions — including work done
 by *other agents* on the same task.
 
+## 快速导航
+
+| 读者 | 必读章节 | 参考章节 |
+|------|---------|---------|
+| 🆕 **新手入门** | [Overview](#overview)、[Two-Layer Model & Visibility](#two-layer-model--visibility)、[Common Mistakes](#common-mistakes) | [CLI Quick Reference](#cli-quick-reference)、[边界条件](#边界条件edge-cases) |
+| 🤖 **Agent 行为** | [Agent 持续判断触发](#agent-持续判断触发触发权在-agent)、[对话内按需记录 / 按需读取](#对话内按需记录--按需读取操作手册) | [Auto-Extract Signals](#auto-extract-signals)、[Auto-Recall & Injection](#auto-recall--injection) |
+| 👥 **多 Agent 协作** | [Multi-Agent Collaboration Rules](#multi-agent-collaboration-rules) | [无 CLI 环境的降级路径](#无-cli-环境的降级路径可选agent-直读-json) |
+| 🔧 **维护管理** | [Maintenance](#maintenance) | [边界条件](#边界条件edge-cases)、[Common Mistakes](#common-mistakes) |
+
+> 提示：新手从 [Overview](#overview) 开始，了解核心概念后再深入各章节。遇到问题先查 [FAQ.md](FAQ.md) 或 [CHEATSHEET.md](CHEATSHEET.md)。
+
 ## Overview
 
 This skill provides a lightweight CLI + agent-driven rules. The agent:
@@ -242,6 +253,13 @@ node scripts/memory_cli.js store \
 - **无强相关**（最高分 < 0.3）时**不注入**——保持对话纯净，宁可漏注不可错注。
 - 中文整句查询已自动支持（检索打分内置 n-gram 窗口），无需分词、无需额外参数。
 
+---
+
+> **以下为高级参考章节**，适用于需要深入理解机制或排查复杂场景时查阅。
+> 新手和日常使用可跳过，先掌握上方核心规则即可。
+
+---
+
 ## Auto-Extract Signals
 
 对话中命中以下信号即主动提取存储（单次对话上限 5 条，宁缺毋滥）：
@@ -314,10 +332,97 @@ node scripts/memory_cli.js store \
 - `list --status archived` 检查归档，确认可物理清理的项用 `delete` 清除。
 - 记忆膨胀会影响检索性能——维护是 skill 的例行工作，不是可选项。
 
+## 边界条件（Edge Cases）
+
+> 本章节集中列出记忆库在使用中可能遇到的边界情况，方便快速查阅。
+> 每个条目后附有指向详细章节的链接。
+
+### 1. 搜索无命中
+
+当 `search --query` 返回空结果时：
+
+1. 确认关键词是否过窄——尝试更宽泛的查询词，或去掉 `--scope` 限制
+2. 确认可见性过滤是否正确——`--visibility` 是否排除了目标记忆？`--as-agent` 是否过滤了 shared 记忆？
+3. 确认记忆库是否已初始化——`init --scope global|workspace`
+4. 以上均确认后，再考虑读项目文件补充，并在回答中说明"记忆库未找到，从项目文件补充"
+
+→ 详见 [Agent 持续判断触发](#agent-持续判断触发触发权在-agent)
+
+### 2. 存储上限
+
+单次对话最多存储 **5 条**记忆（宁缺毋滥）。若达上限后仍有可记录内容：
+
+- 优先更新已有记忆（`update --id`）而非新建
+- 或评估是否可合并（`merge`）
+
+→ 详见 [按需记录](#按需记录对话中实时触发)
+
+### 3. 相关性阈值
+
+| 阈值 | 含义 |
+|------|------|
+| score ≥ 0.5 | 注入回复，并注明来源 |
+| 0.3 ≤ score < 0.5 | 人工判断是否注入 |
+| score < 0.3 | 不注入，保持对话纯净 |
+
+→ 详见 [按需读取](#按需读取对话中适时触发)
+
+### 4. TTL 过期与衰减
+
+以下任一条件满足，`archive` 会将记忆移入归档：
+
+- `ttl_days` 已过期
+- 衰减分 < 0.15
+- 60 天未访问且重要性低
+
+→ 详见 [archive 命令](#archive--归档过期记忆衰减判据)、[Maintenance](#maintenance)
+
+### 5. 默认可见性
+
+| 场景 | 默认 scope | 默认 visibility |
+|------|-----------|----------------|
+| 未指定 scope | global | global |
+| `--scope global` | 全局库 | global |
+| `--scope workspace` | 工作区库 | shared |
+
+→ 详见 [store 命令](#store--存储一条记忆)
+
+### 6. 并发写入
+
+多 Agent 同时写入同一记忆文件时，CLI 使用原子写入策略（先写 `.tmp` 再重命名），避免数据损坏。但如果两个 Agent 同时写不同内容，**后写入的会覆盖先写入的**。建议：
+
+- 不同 Agent 写不同 `--type` 或 `--tags` 的记忆，减少冲突面
+- 避免同时大量写入同一 scope 的库
+- 使用 `--source-conv-id` 区分来源，方便追溯
+
+### 7. 中文查询
+
+`search` 已内置 n-gram 窗口支持中文整句查询，无需分词、无需额外参数。中文关键词和英文关键词混合查询同样支持，检索打分时不区分语言。
+
+→ 详见 [按需读取](#按需读取对话中适时触发)
+
+### 8. 无 CLI 环境
+
+若宿主平台无 Node.js 环境，Agent 可直接读写 JSON 记忆文件——记忆库本质是 JSON（`memories.json`），Agent 原生可理解。但需注意 token 成本随记忆规模线性增长，详见完整降级方案。
+
+→ 详见 [无 CLI 环境的降级路径](#无-cli-环境的降级路径可选agent-直读-json)
+
+### 9. 跨平台路径
+
+所有平台共享同一个**全局记忆库** `~/.memory-store/`，但 skill 安装路径不同（`~/.claude/skills/`、`~/.gemini/skills/` 等）。工作区记忆库 `.agents/memory-store/` 固定在项目目录下，跨平台一致。
+
+→ 详见 [Supported Platforms](#supported-platforms)
+
+### 10. `--as-agent` 身份过滤
+
+检索时 `--as-agent <your-id>` 会自动过滤他人的 `private` 记忆，同时确保看到正确的 `shared` 记忆。**不传身份可能看到不该看的，或看不到共享记忆**——身份一致性对多 Agent 协作至关重要。
+
+→ 详见 [Multi-Agent Collaboration Rules](#multi-agent-collaboration-rules)
+
 ## Common Mistakes
 
-1. **存太多低价值记忆** — 每条都存会导致信噪比下降。默认：未来用不上的不存。
-2. **忘记可见性** — 工作区记忆默认已 shared；全局知识务必存 global 库；隐私/密钥必须 private。
+1. **存太多低价值记忆** — 每条都存会导致信噪比下降。默认：未来用不上的不存。→ 详见 [边界条件 §2 存储上限](#2-存储上限)
+2. **忘记可见性** — 工作区记忆默认已 shared；全局知识务必存 global 库；隐私/密钥必须 private。→ 详见 [边界条件 §5 默认可见性](#5-默认可见性)
 3. **存原始对话文本** — 先压缩成 1-2 句总结再存，否则难检索、浪费空间。
-4. **检索时忽略 --as-agent** — 不传身份会看到别人的 private 记忆（或看不到共享记忆），身份一致性很重要。
-5. **从不维护** — 不归档会导致记忆库膨胀、检索变慢。维护要例行执行。
+4. **检索时忽略 --as-agent** — 不传身份会看到别人的 private 记忆（或看不到共享记忆），身份一致性很重要。→ 详见 [边界条件 §10 --as-agent 身份过滤](#10---as-agent-身份过滤)
+5. **从不维护** — 不归档会导致记忆库膨胀、检索变慢。维护要例行执行。→ 详见 [边界条件 §4 TTL 过期与衰减](#4-ttl-过期与衰减)
