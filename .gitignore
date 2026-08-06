@@ -1,0 +1,36 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Platform-specific config (not part of the skill)
+.claude/
+.workbuddy/
+
+# Python cache (if any remain)
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Node.js (future use)
+node_modules/
+*.tgz
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Agent auto-generated data (not part of the skill)
+.agents/memory-store/
+.agents/skills/
+
+# Design & implementation docs (not part of the skill artifact)
+design_proposal.md
+implementation_plan.md
+implementation_plan_v2.md
+benchmark_report.md
+
+# Logs
+*.log
