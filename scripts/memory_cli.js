@@ -41,6 +41,12 @@ const PLATFORM_GLOBAL_STORES = {
 /** Universal global store path — shared across all agent platforms. */
 const UNIVERSAL_GLOBAL_STORE = path.join(os.homedir(), ".memory-store");
 
+/** Type icons for SUMMARY.md display. */
+const TYPE_ICON = {
+  decision: "📐", debug_solution: "🔧", workflow: "🔄",
+  preference: "⭐", fact: "📌", state: "📊", event: "📅", relation: "🔗",
+};
+
 // ==============================================================================
 // Helpers
 // ==============================================================================
@@ -158,6 +164,57 @@ function saveMemories(storePath, memories) {
   const memFile = path.join(storePath, "memories.json");
   atomicWriteJson(memFile, memories);
   rebuildIndex(storePath, memories);
+  updateSummary(storePath, memories);
+}
+
+/** Compute a composite score for summary ranking: importance × recency boost. */
+function summaryScore(mem) {
+  const imp = parseFloat(mem.importance || 0.5);
+  let recency = 1.0;
+  if (mem.created_at) {
+    const days = (Date.now() - new Date(mem.created_at).getTime()) / 86400000;
+    recency = Math.exp(-0.02 * days); // gentle decay over ~50 days
+  }
+  return imp * recency;
+}
+
+/** Maintain SUMMARY.md — a human/agent-readable snapshot of top memories. */
+function updateSummary(storePath, memories) {
+  if (!memories || memories.length === 0) {
+    fs.writeFileSync(path.join(storePath, "SUMMARY.md"),
+      "# Memory Store Summary\n\n_No memories yet._\n", "utf8");
+    return;
+  }
+
+  // Rank: composite score descending, take top 10
+  const ranked = memories
+    .filter((m) => m.status !== "archived")
+    .map((m) => ({ mem: m, score: summaryScore(m) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+
+  const lines = [];
+  lines.push("# Memory Store Summary\n");
+  lines.push(`_Last updated: ${nowISO()}_\n`);
+  lines.push(`Total memories: ${memories.length} | Showing top ${ranked.length}\n`);
+  lines.push("---\n");
+
+  for (const { mem, score } of ranked) {
+    const icon = TYPE_ICON[mem.type] || "📄";
+    const p = mem.priority || "P2";
+    const imp = mem.importance || "—";
+    const scope = mem.scope === "workspace" ? "📁" : "🌐";
+    lines.push(`### ${icon} ${mem.type}: ${mem.title}`);
+    lines.push(`**Priority:** ${p} · **Importance:** ${imp} · **Scope:** ${scope} ${mem.scope || "global"}`);
+    if (mem.summary) lines.push(mem.summary);
+    if (mem.tags && mem.tags.length) lines.push(`\`tags: ${mem.tags.join(", ")}\``);
+    lines.push("");
+  }
+
+  lines.push("---\n");
+  lines.push("_Run `memory-store search --query \"...\"` for full-text search._\n");
+
+  fs.writeFileSync(path.join(storePath, "SUMMARY.md"), lines.join("\n"), "utf8");
 }
 
 function rebuildIndex(storePath, memories) {
