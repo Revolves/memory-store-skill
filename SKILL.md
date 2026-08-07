@@ -18,6 +18,7 @@ agent can recall relevant context in future interactions — including work done
 by *other agents* on the same task.
 
 ## 快速导航
+github: https://github.com/Revolves/memory-store-skill
 
 | 读者 | 必读章节 | 参考章节 |
 |------|---------|---------|
@@ -48,6 +49,8 @@ This skill provides a lightweight CLI + agent-driven rules. The agent:
 | WorkBuddy / Antigravity | `workbuddy` | `~/.workbuddy/skills/memory-store/` | `~/.memory-store/` |
 | Cursor | `cursor` | `~/.cursor/skills/memory-store/` | `~/.memory-store/` |
 | Windsurf | `windsurf` | `~/.windsurf/skills/memory-store/` | `~/.memory-store/` |
+| QoderWorkCN | `qoderworkcn` | `~/.qoderworkcn/skills/memory-store/` | `~/.memory-store/` |
+| Trae CN | `trae-cn` | `~/.trae-cn/skills/memory-store/` | `~/.memory-store/` |
 
 > All platforms share the same global memory store at `~/.memory-store/` — memories stored by one agent are visible to all others.
 
@@ -106,13 +109,16 @@ node scripts/memory_cli.js store \
 node scripts/memory_cli.js search \
   --query "关键词" \
   [--scope all|global|workspace] \
+  [--type decision,debug_solution] \   # 逗号分隔多值；非法 type 报错
   [--visibility private,shared,global] \
   [--as-agent <your-id>] \
   [--limit 5] \
-  --output results.json
+  [--output results.json | --stdout]
 ```
 
 - `--scope all`（默认）：合并全局+工作区两层检索。
+- `--type`：**支持逗号分隔多值**（如 `decision,debug_solution`），按类型集合过滤；传入非法 type 会报错退出。
+- `--output <file>`：写入文件；**缺省即直接 stdout 输出 JSON**（Agent 无需再读文件）。`--stdout` 为显式 stdout 标志。
 - `--as-agent <id>`：以该 Agent 身份过滤——别人的 `private` 记忆不可见。
 - 跨层结果自动去重，按相关性打分排序（关键词+标签+类型+时间+重要性）。
 
@@ -125,8 +131,10 @@ node scripts/memory_cli.js recall --id mem_xxx --output detail.json
 ### list — 列出记忆（支持过滤）
 
 ```bash
-node scripts/memory_cli.js list --scope all [--status active] [--visibility shared] [--type decision] --output list.json
+node scripts/memory_cli.js list --scope all [--status active] [--visibility shared] [--type decision,debug_solution] [--output list.json | --stdout]
 ```
+
+`--type` 同样支持逗号分隔多值。
 
 ### update — 更新记忆（可升级可见性）
 
@@ -151,9 +159,10 @@ node scripts/memory_cli.js stats --scope all --output stats.json   # 含 scope/v
 ### 其他
 
 - `init` — 初始化存储目录（`--scope global|workspace`）
+- `version` / `-v` / `--version` — 打印已安装的 skill 版本（`package.json` 中的 `version`，纯 Node 实现）
 - `merge` — 合并相似记忆
 - `delete` — 删除记忆
-- `compress` — 从 transcript 提取候选片段（Agent 总结后 store）
+- `compress` — 从 transcript 提取候选片段（Agent 总结后 store）。**支持 Antigravity transcript 格式**（`type: USER_INPUT` / `PLANNER_RESPONSE`）**与通用对话格式**（`{role: user|assistant|system, content|text}`），自动识别并输出 `detected_format`；整文件 JSON 数组也兼容。其他平台或自定义格式的 transcript 建议直接用 `store` 手动存储（Agent 自行总结）。
 
 ## Agent 持续判断触发（触发权在 Agent）
 
@@ -191,8 +200,8 @@ node scripts/memory_cli.js stats --scope all --output stats.json   # 含 scope/v
 | 用户说法（示例） | 问题类型 | 强制动作 |
 |------------------|----------|----------|
 | "之前的进度"、"实施到哪了"、"我们之前定的…" | 历史进度 | `search --scope all --limit 5` |
-| "之前怎么解决的"、"为什么选 X"、"上次的方案" | 历史决策/排障 | `search --type decision,debug_solution` |
-| "用户偏好"、"项目惯例"、"我们怎么约定的" | 偏好/工作流 | `search --scope all --type preference`（需要 workflow 时再 `--type workflow` 搜一次） |
+| "之前怎么解决的"、"为什么选 X"、"上次的方案" | 历史决策/排障 | `search --type decision,debug_solution`（逗号分隔多值，一次覆盖） |
+| "用户偏好"、"项目惯例"、"我们怎么约定的" | 偏好/工作流 | `search --scope all --type preference,workflow`（多值一次覆盖） |
 | "任务进展"、"当前状态"、"接着上次的" | 状态/任务交接 | `search --type state` + `--visibility shared,global` |
 | "记得"、"还记得"、"上次讨论过" | 引用历史 | `search --scope all` |
 | 新对话/新任务第一句 | 上下文注入 | `search --scope all --limit 5` |
@@ -304,7 +313,7 @@ node scripts/memory_cli.js store \
 > 若宿主平台无 Node.js 环境，**Agent 可直接读写 JSON 记忆文件**——记忆库本质是 JSON，Agent 原生可理解。**但直读有 token 成本上限（见下方规模分级），CLI 仍优先**——它把"全量扫描"压缩为"top-N 注入"，token 成本恒定。
 
 **记忆文件位置**：
-- 全局库：`~/.{platform}/memory-store/memories.json`
+- 全局库：`~/.memory-store/memories.json`
 - 工作区库：`{workspace}/.agents/memory-store/memories.json`
 
 **记录（降级 store）**：读取目标 memories.json → 按 v2 数据模型（见 `references/memory_schema.json`）追加一条记忆（含 `id/scope/visibility/type/title/summary/tags/importance/priority/created_at` 等字段）→ **原子写**（先写 `memories.json.tmp` 再改名替换）。

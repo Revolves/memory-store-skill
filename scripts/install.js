@@ -14,7 +14,7 @@
  *   node scripts/install.js --help           Show help
  *
  * Detected platforms:
- *   claude, codex, gemini, opencode, workbuddy, cursor, windsurf
+ *   claude, codex, gemini, opencode, workbuddy, cursor, windsurf, qoderworkcn, trae-cn
  */
 
 const fs = require("fs");
@@ -239,13 +239,15 @@ Usage:
   node scripts/install.js --help             Show this help
 
 Detected platforms:
-  claude     — Claude Code
-  codex      — Codex
-  gemini     — Gemini CLI
-  opencode   — OpenCode
-  workbuddy  — WorkBuddy / Antigravity
-  cursor     — Cursor
-  windsurf   — Windsurf
+  claude      — Claude Code
+  codex       — Codex
+  gemini      — Gemini CLI
+  opencode    — OpenCode
+  workbuddy   — WorkBuddy / Antigravity
+  cursor      — Cursor
+  windsurf    — Windsurf
+  qoderworkcn — QoderWorkCN
+  trae-cn     — Trae CN
 `);
     process.exit(0);
   }

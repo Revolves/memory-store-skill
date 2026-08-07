@@ -246,7 +246,7 @@ cp -r memory-store ~/.claude/skills/
 
 ```bash
 # 1. 升级版本
-npm version patch   # 0.0.1 → 0.0.2
+npm version patch   # 1.0.2 → 1.0.3
 
 # 2. 发布（需要 2FA OTP 验证码）
 npm publish

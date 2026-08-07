@@ -1,6 +1,6 @@
 {
   "name": "memory-store-skill",
-  "version": "0.0.1",
+  "version": "1.0.2",
   "description": "Conversation memory skill for multi-agent AI workflows — store, share, and recall across sessions and agents",
   "keywords": [
     "memory",
@@ -19,8 +19,8 @@
     "cursor",
     "windsurf",
     "gemini",
-    "cline",
-    "roo"
+    "qoderworkcn",
+    "trae-cn"
   ],
   "homepage": "https://github.com/Revolves/memory-store-skill",
   "bugs": "https://github.com/Revolves/memory-store-skill/issues",
@@ -41,6 +41,7 @@
     "examples/example_memories.json"
   ],
   "scripts": {
+    "test": "node test/smoke.js",
     "postinstall": "node scripts/postinstall.js"
   },
   "engines": {

@@ -22,7 +22,6 @@ const crypto = require("crypto");
 // ==============================================================================
 
 const VALID_TYPES = ["workflow", "decision", "fact", "preference", "debug_solution", "state", "event", "relation"];
-const SCOPES = ["global", "project", "workspace"];
 const VISIBILITIES = ["private", "shared", "global"];
 const PRIORITIES = ["P1", "P2", "P3"];
 const SCHEMA_VERSION = 2;
@@ -30,11 +29,17 @@ const DEFAULT_VISIBILITY = { global: "global", project: "shared", workspace: "sh
 const PRIORITY_DECAY = { P1: 0.3, P2: 0.5, P3: 0.8 };
 const PROJECT_STORE_RELATIVE = path.join(".agents", "memory-store");
 
-const PLATFORM_GLOBAL_STORES = {
-  antigravity: path.join(os.homedir(), ".gemini", "config", "memory-store"),
+// Authoritative fallback version. MUST match package.json "version".
+// Used when package.json is not present (e.g. deployed skill dir without it).
+const VERSION = "1.0.2";
+
+// Legacy platform-specific global stores (pre-v2.8). Used only by `migrate`
+// to discover and consolidate memories into the universal store.
+const LEGACY_GLOBAL_STORES = {
   claude: path.join(os.homedir(), ".claude", "memory-store"),
-  codex: path.join(os.homedir(), ".agents", "memory-store"),
   gemini: path.join(os.homedir(), ".gemini", "memory-store"),
+  antigravity: path.join(os.homedir(), ".gemini", "config", "memory-store"),
+  codex: path.join(os.homedir(), ".agents", "memory-store"),
   opencode: path.join(os.homedir(), ".config", "opencode", "memory-store"),
 };
 
@@ -69,6 +74,27 @@ function normalizeScope(scope) {
 
 function inferPriority(imp) {
   return imp >= 0.8 ? "P1" : imp >= 0.5 ? "P2" : "P3";
+}
+
+/** Normalized signature for dedup: type + title + leading summary. */
+function memSignature(m) {
+  const norm = (s) => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  return `${m.type || "fact"}|${norm(m.title)}|${norm(m.summary).slice(0, 80)}`;
+}
+
+/** Parse --type (comma-separated, multi-value) into a validated Set, or null if absent. */
+function parseTypeFilter(typeArg) {
+  if (!typeArg) return null;
+  const types = typeArg.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (!types.length) return null;
+  const invalid = types.filter((t) => !VALID_TYPES.includes(t));
+  if (invalid.length) {
+    process.stderr.write(
+      `Error: Invalid memory type(s): ${invalid.join(", ")}. Must be one of: ${VALID_TYPES.join(", ")}\n`
+    );
+    process.exit(1);
+  }
+  return new Set(types);
 }
 
 /** Read-time normalization: fill v2 fields with defaults (back-compat). */
@@ -233,9 +259,24 @@ function rebuildIndex(storePath, memories) {
 }
 
 function writeOutput(data, outputFile) {
+  const json = JSON.stringify(data, null, 2) + "\n";
+  if (!outputFile) {
+    process.stdout.write(json);
+    return;
+  }
   const out = path.resolve(outputFile);
-  fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, JSON.stringify(data, null, 2) + "\n", "utf8");
+  try {
+    const st = fs.existsSync(out) ? fs.statSync(out) : null;
+    if (st && st.isDirectory()) {
+      process.stderr.write(`Error: --output path is a directory, not a file: ${out}\n`);
+      process.exit(1);
+    }
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, json, "utf8");
+  } catch (e) {
+    process.stderr.write(`Error: Cannot write output to '${out}': ${e.message}\n`);
+    process.exit(1);
+  }
   process.stdout.write(`Success! Output written to: ${out}\n`);
 }
 
@@ -270,8 +311,8 @@ function expandQueryUnits(query) {
   return units;
 }
 
-function calcScore(mem, rawQuery, filterTags, filterType) {
-  if (filterType && mem.type !== filterType) return 0;
+function calcScore(mem, rawQuery, filterTags, filterTypes) {
+  if (filterTypes && !filterTypes.has(mem.type)) return 0;
   const memTags = new Set((mem.tags || []).map((t) => t.toLowerCase()));
   if (filterTags.size && ![...filterTags].every((t) => memTags.has(t))) return 0;
 
@@ -309,7 +350,7 @@ function calcScore(mem, rawQuery, filterTags, filterType) {
     tagScore = memTags.size ? 0.5 : 0;
   }
 
-  const typeScore = filterType ? 1.0 : 0.5;
+  const typeScore = filterTypes ? 1.0 : 0.5;
 
   let recency = 0.5;
   if (mem.created_at) {
@@ -403,7 +444,7 @@ function cmdStore(a) {
 function cmdSearch(a) {
   const query = a.query || "";
   const filterTags = new Set(a.tags ? a.tags.split(",").map((t) => t.trim().toLowerCase()) : []);
-  const filterType = a.type || null;
+  const filterTypes = parseTypeFilter(a.type);
   const visibilityFilter = new Set(a.visibility ? a.visibility.split(",").map((v) => v.trim().toLowerCase()) : []);
   const asAgent = a.as_agent || process.env.MEMORY_AGENT_ID || null;
 
@@ -417,7 +458,7 @@ function cmdSearch(a) {
       m = defaults(m, scopeName);
       if (asAgent && m.visibility === "private" && m.owner_agent !== asAgent) continue;
       if (visibilityFilter.size && !visibilityFilter.has(m.visibility)) continue;
-      const score = calcScore(m, query, filterTags, filterType);
+      const score = calcScore(m, query, filterTags, filterTypes);
       if (score > 0) {
         seen.add(m.id);
         results.push({ ...m, _score: score, _store_scope: scopeName });
@@ -460,7 +501,10 @@ function cmdList(a) {
       mems.push(m);
     }
   }
-  if (a.type) mems = mems.filter((m) => m.type === a.type);
+  if (a.type) {
+    const filterTypes = parseTypeFilter(a.type);
+    if (filterTypes) mems = mems.filter((m) => filterTypes.has(m.type));
+  }
   if (a.tags) {
     const req = new Set(a.tags.split(",").map((t) => t.trim().toLowerCase()));
     mems = mems.filter((m) => req.size && [...req].every((t) => (m.tags || []).includes(t)));
@@ -663,6 +707,37 @@ function cmdStats(a) {
   );
 }
 
+/**
+ * Extract a memory-relevant fragment from one transcript step.
+ * Supports two formats:
+ *   - Antigravity transcript: { type: "USER_INPUT" | "PLANNER_RESPONSE", ... }
+ *   - Generic chat log:       { role: "user"|"assistant"|"system", content|text }
+ * Returns a fragment object, or null if the step is not recognizable.
+ */
+function extractFragment(step) {
+  if (!step || typeof step !== "object") return null;
+  if (step.type === "USER_INPUT") {
+    return { role: "user", content: (step.content || "").slice(0, 1000) };
+  }
+  if (step.type === "PLANNER_RESPONSE") {
+    const toolCalls = step.tool_calls || [];
+    const toolNames = toolCalls
+      .filter((tc) => typeof tc === "object")
+      .map((tc) => tc.name || tc.tool_name || "");
+    return {
+      role: "assistant",
+      summary: (step.content || "").slice(0, 500) || "Tool calls executed",
+      tools_used: toolNames,
+    };
+  }
+  const role = (step.role || "").toString().toLowerCase();
+  if (role === "user" || role === "assistant" || role === "system") {
+    const c = step.content || step.text || "";
+    return { role, content: c.slice(0, 1000) };
+  }
+  return null;
+}
+
 function cmdCompress(a) {
   const input = path.resolve(a.input);
   if (!fs.existsSync(input)) {
@@ -670,6 +745,9 @@ function cmdCompress(a) {
     process.exit(1);
   }
   const fragments = [];
+  let detectedFormat = "unknown";
+
+  // Pass 1: per-line JSON (Antigravity JSONL / one-object-per-line chat logs)
   for (const line of fs.readFileSync(input, "utf8").split("\n")) {
     if (!line.trim()) continue;
     let step;
@@ -678,30 +756,147 @@ function cmdCompress(a) {
     } catch (e) {
       continue;
     }
-    const type = step.type;
-    const content = step.content || "";
-    if (type === "USER_INPUT") {
-      fragments.push({ role: "user", content: content.slice(0, 1000) });
-    } else if (type === "PLANNER_RESPONSE") {
-      const toolCalls = step.tool_calls || [];
-      const toolNames = toolCalls.filter((tc) => typeof tc === "object").map((tc) => tc.name || tc.tool_name || "");
-      fragments.push({
-        role: "assistant",
-        summary: content ? content.slice(0, 500) : "Tool calls executed",
-        tools_used: toolNames,
-      });
+    const f = extractFragment(step);
+    if (f) {
+      fragments.push(f);
+      detectedFormat = step.type ? "antigravity" : "generic-chat";
     }
   }
+
+  // Pass 2: whole-file JSON array (single-line or pretty-printed)
+  if (fragments.length === 0) {
+    try {
+      const arr = JSON.parse(fs.readFileSync(input, "utf8"));
+      if (Array.isArray(arr)) {
+        for (const obj of arr) {
+          const f = extractFragment(obj);
+          if (f) {
+            fragments.push(f);
+            detectedFormat = obj.type ? "antigravity" : "generic-chat";
+          }
+        }
+      }
+    } catch (e) {
+      /* not a JSON array */
+    }
+  }
+
+  if (fragments.length === 0) {
+    process.stderr.write(
+      "Warning: No recognizable transcript fragments found. Supported formats: Antigravity transcript " +
+        "(type USER_INPUT/PLANNER_RESPONSE) and generic chat ({role, content|text}). For other platforms, " +
+        "store memories manually with the `store` subcommand.\n"
+    );
+  }
+
   writeOutput(
     {
       source_transcript: input,
+      detected_format: detectedFormat,
       extracted_steps_count: fragments.length,
       conversation_fragments: fragments,
       instructions_for_agent:
-        "Review the extracted conversation fragments above. Identify key decisions, workflows, facts, preferences, or debug solutions. Summarize each into a concise memory entry and call `store` subcommand to persist.",
+        "Review the extracted conversation fragments above. Identify key decisions, workflows, facts, preferences, or debug solutions. Summarize each into a concise memory entry and call `store` subcommand to persist. For platforms whose transcript format is unsupported, summarize manually and call `store` directly.",
     },
     a.output
   );
+}
+
+function cmdMigrate(a) {
+  const targetStore = resolveStorePath(a.store_path, "global"); // universal: ~/.memory-store
+  const targetMems = loadMemories(targetStore);
+  const seenIds = new Set(targetMems.map((m) => m.id));
+  const seenSig = new Set(targetMems.map((m) => memSignature(defaults(m, "global"))));
+
+  const dryRun = a.dry_run === true || a["dry-run"] === true;
+  const sourcesFound = [];
+  let migrated = 0;
+  let skipped = 0;
+
+  for (const [platform, legacyPath] of Object.entries(LEGACY_GLOBAL_STORES)) {
+    const memFile = path.join(legacyPath, "memories.json");
+    if (!fs.existsSync(memFile)) continue;
+    const legacyMems = loadMemories(legacyPath);
+    if (!legacyMems.length) continue;
+
+    const archived = [];
+    const archiveDir = path.join(legacyPath, "archive");
+    if (fs.existsSync(archiveDir)) {
+      for (const f of fs.readdirSync(archiveDir)) {
+        if (!f.startsWith("archived_") || !f.endsWith(".json")) continue;
+        try {
+          const arr = JSON.parse(fs.readFileSync(path.join(archiveDir, f), "utf8"));
+          if (Array.isArray(arr)) archived.push(...arr);
+        } catch (e) {
+          /* ignore corrupted archive */
+        }
+      }
+    }
+
+    sourcesFound.push({
+      platform,
+      path: legacyPath,
+      active: legacyMems.length,
+      archived: archived.length,
+    });
+
+    const candidates = legacyMems.concat(archived);
+    for (let m of candidates) {
+      m = defaults(m, "global");
+      if (seenIds.has(m.id) || seenSig.has(memSignature(m))) {
+        skipped++;
+        continue;
+      }
+      seenSig.add(memSignature(m));
+      seenIds.add(m.id);
+      targetMems.push(m);
+      migrated++;
+    }
+  }
+
+  if (migrated > 0 && !dryRun) {
+    saveMemories(targetStore, targetMems);
+  }
+
+  const report = {
+    target_store: targetStore,
+    dry_run: dryRun,
+    sources_found: sourcesFound,
+    migrated,
+    skipped,
+    total_now: targetMems.length,
+  };
+  if (dryRun) {
+    process.stdout.write(
+      `[dry-run] Would migrate ${migrated} memories (skip ${skipped}) into ${targetStore}\n`
+    );
+  }
+  writeOutput(report, a.output);
+}
+
+function cmdVersion(a) {
+  let version = VERSION;
+  // Prefer package.json when present (dev context); fall back to the
+  // authoritative VERSION constant above (deployed skill without package.json).
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")
+    );
+    version = pkg.version || version;
+  } catch (e) {
+    /* fall back to VERSION constant */
+  }
+  const info = {
+    name: "memory-store",
+    version,
+    runtime: "node",
+    note: "Pure Node.js implementation — zero dependencies, no Python required.",
+  };
+  if (a.output) {
+    writeOutput(info, a.output);
+  } else {
+    process.stdout.write(`${info.name} v${info.version} (${info.runtime})\n`);
+  }
 }
 
 // ==============================================================================
@@ -731,15 +926,25 @@ function main() {
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
     process.stdout.write(
       "Memory Store CLI (Node.js). Commands:\n" +
-      "  init store search recall list update delete merge archive stats compress\n" +
+      "  init store search recall list update delete merge archive stats compress migrate version\n" +
       "Usage: memory-store <command> [--key value ...]\n" +
 "       node scripts/memory_cli.js <command> [--key value ...]\n" +
+      "Output: results print as JSON to stdout by default; use --output <file> to write a file.\n" +
+      "        --stdout forces stdout explicitly. --type accepts comma-separated values.\n" +
+      "        version / -v / --version prints the installed version.\n" +
       "Docs: see SKILL.md (relative to the skill directory)\n"
     );
     return;
   }
+  if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "version") {
+    cmdVersion(parseArgs(argv.slice(1)));
+    return;
+  }
   const command = argv[0];
   const a = parseArgs(argv.slice(1));
+  // --stdout forces JSON to stdout (no file). Output already defaults to stdout
+  // when --output is omitted; this makes the intent explicit.
+  if (a.stdout) delete a.output;
   const handlers = {
     init: cmdInit,
     store: cmdStore,
@@ -752,6 +957,8 @@ function main() {
     archive: cmdArchive,
     stats: cmdStats,
     compress: cmdCompress,
+    migrate: cmdMigrate,
+    version: cmdVersion,
   };
   if (!handlers[command]) {
     process.stderr.write(`Error: Unknown command '${command}'\n`);

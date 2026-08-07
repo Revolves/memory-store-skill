@@ -13,8 +13,8 @@
     </a>
   </p>
   <p align="center">
-    <img src="https://img.shields.io/badge/version-v1.0.0-important?style=flat-square" alt="v1.0.0">
-    <img src="https://img.shields.io/badge/platform-Claude_Code%20|%20Codex%20|%20Antigravity%20|%20OpenCode-8A2BE2?style=flat-square" alt="multi-platform">
+    <img src="https://img.shields.io/badge/version-1.0.2-important?style=flat-square" alt="1.0.2">
+    <img src="https://img.shields.io/badge/platform-9_Agent_CLIs-8A2BE2?style=flat-square" alt="9 platforms">
     <img src="https://img.shields.io/badge/language-Node.js-339933?style=flat-square&logo=nodedotjs" alt="Node.js">
   </p>
 </p>

@@ -45,7 +45,7 @@ The design holds the **Skill baseline**: `SKILL.md` is the instruction core, the
 | Lifecycle | Decay scoring + archive (TTL/decay/importance triple criteria) + merge dedup |
 | Chinese retrieval | Built-in n-gram windows: whole-sentence Chinese queries hit without tokenization |
 | Atomic writes | Temp file + `os.replace`; concurrent agent writes never corrupt data |
-| Multi-platform | Detects and installs to Claude Code / Codex / Antigravity / Gemini / OpenCode / Cline / Roo |
+| Multi-platform | Claude Code / Codex / Gemini CLI / OpenCode / WorkBuddy / Cursor / Windsurf / QoderWorkCN / Trae CN |
 
 ---
 
@@ -64,7 +64,7 @@ The design holds the **Skill baseline**: `SKILL.md` is the instruction core, the
                 │ Promote / inject
 ┌───────────────▼─────────────────────────────────────┐
 │  Global Scope                                       │
-│  ~/.{platform}/memory-store/          default global │
+│  ~/.memory-store/                     default global │
 │  └ User preferences, common knowledge, cross-project │
 └─────────────────────────────────────────────────────┘
 ```
@@ -77,34 +77,24 @@ The design holds the **Skill baseline**: `SKILL.md` is the instruction core, the
 
 ## 4. Installation
 
-### Option 0: npm global install (recommended)
+### Option 1: local script install (recommended)
 
 ```bash
-npm install -g memory-store-skill
+# Clone the repo
+git clone https://github.com/Revolves/memory-store-skill.git
+cd memory-store-skill
 
-# Then use as a global command:
-memory-store search --query "database" --limit 5 --output r.json
-memory-store-install --all
-```
-
-Or run without installing:
-
-```bash
-npx memory-store-skill search --query "memory" --limit 3 --output /tmp/r.json
-```
-
-### Option 1: local script
-
-```bash
 # Auto-detect and install to all detected AI agents
 node scripts/install.js --all
 
-# Install to specific agent + project level
-node scripts/install.js --agent claude --project
+# Install to a specific agent
+node scripts/install.js --agent claude
 
 # List detected agents
 node scripts/install.js --list
 ```
+
+> npm package coming soon. Once published: `npm install -g memory-store-skill`.
 
 ### Option 2: manual copy
 
@@ -179,22 +169,23 @@ cat result.json    # View the search results
 
 ```bash
 # Store a decision memory (workspace collaboration)
-memory-store store \
+node scripts/memory_cli.js store \
   --type decision --title "DB choice" \
   --summary "Chose SQLite over PostgreSQL (single-user)" \
   --tags "database,architecture" --importance 0.85 --priority P1 \
   --scope workspace --visibility shared --agent-id agent-a
 
 # New session: search related memories
-memory-store search \
+node scripts/memory_cli.js search \
   --query "database choice" --scope all --as-agent agent-b --limit 5 --output r.json
 
 # Handoff: pull prior agent's shared memories
-memory-store search \
+node scripts/memory_cli.js search \
   --query "work topic" --scope workspace --visibility shared,global --limit 10
 
-# Routine maintenance: archive low-value / expired memories
-memory-store archive --scope all --apply-decay --min-decay 0.15 --output a.json
+# Routine maintenance: archive (run for each scope separately)
+node scripts/memory_cli.js archive --scope global --apply-decay --min-decay 0.15 --output a.json
+node scripts/memory_cli.js archive --scope workspace --apply-decay --min-decay 0.15 --output b.json
 ```
 
 ### 5.3 Agent Calling View

@@ -45,7 +45,7 @@ Memory Store 是一个**轻量级对话记忆技能**，服务于 AI Agent 工�
 | 生命周期 | 衰减评分 + 归档（TTL/衰减/重要性三重判据）+ 合并去冗余 |
 | 中文检索 | 内置 n-gram 窗口，中文整句查询无需分词即可命中 |
 | 原子写 | 临时文件 + 原子替换，多 Agent 并发写入不损坏数据 |
-| 多平台 | 自动检测并安装至 Claude Code / Codex / Antigravity / Gemini / OpenCode / Cline / Roo |
+| 多平台 | Claude Code / Codex / Gemini CLI / OpenCode / WorkBuddy / Cursor / Windsurf / QoderWorkCN / Trae CN |
 
 ---
 
@@ -64,7 +64,7 @@ Memory Store 是一个**轻量级对话记忆技能**，服务于 AI Agent 工�
                 │ 沉淀 promote / 回灌 inject
 ┌───────────────▼─────────────────────────────────────┐
 │  全局记忆 global scope                                │
-│  ~/.{platform}/memory-store/         默认 global      │
+│  ~/.memory-store/                    默认 global      │
 │  └ 用户偏好、通用知识、历史决策（跨项目共享）           │
 └─────────────────────────────────────────────────────┘
 ```
@@ -77,34 +77,24 @@ Memory Store 是一个**轻量级对话记忆技能**，服务于 AI Agent 工�
 
 ## 4. 安装部署
 
-### 方式零：npm 全局安装（推荐）
+### 方式一：本地脚本安装（推荐）
 
 ```bash
-npm install -g memory-store-skill
+# 克隆仓库
+git clone https://github.com/Revolves/memory-store-skill.git
+cd memory-store-skill
 
-# 安装后全局可用：
-memory-store search --query "数据库" --limit 5 --output r.json
-memory-store-install --all
-```
-
-或免安装直接运行：
-
-```bash
-npx memory-store-skill search --query "记忆" --limit 3 --output /tmp/r.json
-```
-
-### 方式一：本地脚本安装
-
-```bash
 # 自动检测并安装到所有已安装的 AI Agent 平台
 node scripts/install.js --all
 
-# 安装到指定平台，同时安装项目级 skill
-node scripts/install.js --agent claude --project
+# 安装到指定平台
+node scripts/install.js --agent claude
 
 # 查看可安装的平台列表
 node scripts/install.js --list
 ```
+
+> npm 包即将发布。发布后可用 `npm install -g memory-store-skill`。
 
 ### 方式二：手动复制
 
@@ -179,22 +169,23 @@ cat result.json    # 查看检索结果
 
 ```bash
 # 存储一条决策记忆（工作区协作共享）
-memory-store store \
+node scripts/memory_cli.js store \
   --type decision --title "数据库选型" \
   --summary "选择 SQLite 而非 PostgreSQL，单用户场景" \
   --tags "database,architecture" --importance 0.85 --priority P1 \
   --scope workspace --visibility shared --agent-id agent-a
 
 # 新会话检索相关记忆
-memory-store search \
+node scripts/memory_cli.js search \
   --query "数据库选型" --scope all --as-agent agent-b --limit 5 --output r.json
 
 # 接手他人工作：拉取前序 Agent 的 shared 记忆
-memory-store search \
+node scripts/memory_cli.js search \
   --query "工作主题" --scope workspace --visibility shared,global --limit 10
 
-# 例行维护：归档低价值/过期记忆
-memory-store archive --scope all --apply-decay --min-decay 0.15 --output a.json
+# 例行维护：归档低价值/过期记忆（分全局和工作区两次）
+node scripts/memory_cli.js archive --scope global --apply-decay --min-decay 0.15 --output a.json
+node scripts/memory_cli.js archive --scope workspace --apply-decay --min-decay 0.15 --output b.json
 ```
 
 ### 5.3 Agent 调用视角
