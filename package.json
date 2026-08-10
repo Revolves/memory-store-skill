@@ -44,8 +44,9 @@
     "agents"
   ],
   "scripts": {
-    "test": "node test/smoke.js && node test/install_contract.js",
+    "test": "node test/smoke.js && node test/install_contract.js && node test/release_contract.js",
     "test:install": "node test/install_contract.js",
+    "test:release": "node test/release_contract.js",
     "postinstall": "node scripts/postinstall.js"
   },
   "engines": {
