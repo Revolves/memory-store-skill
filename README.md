@@ -21,17 +21,30 @@ Requires Node.js 18+ · 需要 Node.js 18+
 
 ```bash
 npm i memory-store-skill
+npx memory-store-install --agent codex --memory-profile explicit
 ```
 
-The npm installer automatically detects supported Agent platforms and installs the skill. Start a new Agent session after installation.
+Installing the npm package does not run lifecycle hooks or modify Agent directories. The explicit second command installs the skill for the selected platform. Start a new Agent session afterward.
 
-npm 安装器会自动检测支持的 Agent 平台并安装 skill。安装完成后，请新开一个 Agent 会话。
+npm 包安装不会运行生命周期脚本，也不会修改 Agent 目录。第二条显式命令才会把 skill 安装到指定平台；完成后请新开一个 Agent 会话。
+
+Memory policy can be changed later · 记忆策略可在安装后调整：
+
+```bash
+npx memory-store config show
+npx memory-store config set --profile balanced --scope global
+npx memory-store config set --profile explicit --scope workspace
+```
+
+Profiles: `off`, `explicit` (safe default), `balanced`, and `proactive`. Workspace configuration overrides the global profile.
+
+档位包括 `off`、`explicit`（安全默认值）、`balanced` 和 `proactive`；工作区配置会覆盖全局配置。
 
 ```bash
 # Verify · 验证
 npx memory-store version
 
-# Select a platform manually · 手动指定平台
+# Inspect or select a platform · 查看或指定平台
 npx memory-store-install --list
 npx memory-store-install --agent codex
 ```
@@ -39,12 +52,13 @@ npx memory-store-install --agent codex
 ## Update · 更新
 
 ```bash
+npm i memory-store-skill@latest
 npx memory-store-update
 ```
 
-This downloads npm `latest`, updates only existing skill installations, verifies the result, and leaves memory data unchanged.
+The first command explicitly upgrades the npm package. The second syncs only existing skill installations from that local package, verifies the result, and leaves memory data unchanged. The updater does not download or execute remote code.
 
-该命令会下载 npm `latest`，只更新已有的 skill 安装并完成校验，不会修改记忆数据。
+第一条命令显式升级 npm 包；第二条命令从本地包同步已有的 skill 安装并完成校验，不会修改记忆数据。更新器本身不会下载或执行远程代码。
 
 ```bash
 # Preview or update one platform · 预览或指定平台
@@ -69,6 +83,7 @@ npx memory-store-update --agent codex
 - [English: full guide and quick start](README.en.md)
 - [CLI 速查表](CHEATSHEET.md)
 - [常见问题](FAQ.md)
+- [安全边界 / Security model](SECURITY.md)
 - [Agent 指令](SKILL.md)
 
 需要从源码安装或参与开发时：

@@ -29,10 +29,38 @@ const DEFAULT_VISIBILITY = { global: "global", project: "shared", workspace: "sh
 // Weekly retention factor: larger values decay more slowly.
 const PRIORITY_DECAY = { P1: 0.8, P2: 0.5, P3: 0.3 };
 const PROJECT_STORE_RELATIVE = path.join(".agents", "memory-store");
+const CONFIG_SCHEMA_VERSION = 1;
+const DEFAULT_MEMORY_PROFILE = "explicit";
+const MEMORY_PROFILES = {
+  off: {
+    auto_recall: "off",
+    auto_store: "off",
+    allowed_automatic_types: [],
+    max_automatic_memories_per_conversation: 0,
+  },
+  explicit: {
+    auto_recall: "explicit",
+    auto_store: "explicit",
+    allowed_automatic_types: [],
+    max_automatic_memories_per_conversation: 0,
+  },
+  balanced: {
+    auto_recall: "relevant",
+    auto_store: "selective",
+    allowed_automatic_types: ["decision", "debug_solution", "workflow", "preference"],
+    max_automatic_memories_per_conversation: 3,
+  },
+  proactive: {
+    auto_recall: "relevant",
+    auto_store: "proactive",
+    allowed_automatic_types: VALID_TYPES,
+    max_automatic_memories_per_conversation: 5,
+  },
+};
 
 // Authoritative fallback version. MUST match package.json "version".
 // Used when package.json is not present (e.g. deployed skill dir without it).
-const VERSION = "1.0.4";
+const VERSION = "1.0.5";
 
 // Legacy platform-specific global stores (pre-v2.8). Used only by `migrate`
 // to discover and consolidate memories into the universal store.
@@ -167,6 +195,7 @@ function defaults(mem, storeScope) {
     status: "active",
     decay_score: imp,
     owner_agent: null,
+    write_intent: "explicit",
     embedding: null,
     embedding_model: null,
   };
@@ -189,6 +218,56 @@ function detectDefaultStorePath(scope) {
 function resolveStorePath(overridePath, scope) {
   if (overridePath) return path.resolve(overridePath);
   return detectDefaultStorePath(scope);
+}
+
+function memoryProfile(profile, source, configPath = null) {
+  const settings = MEMORY_PROFILES[profile];
+  if (!settings) fail(`Invalid profile '${profile}'. Must be one of: ${Object.keys(MEMORY_PROFILES).join(", ")}.`);
+  return {
+    schema_version: CONFIG_SCHEMA_VERSION,
+    profile,
+    ...settings,
+    notify_on_automatic_store: true,
+    source,
+    config_path: configPath,
+  };
+}
+
+function readMemoryConfig(scope, overridePath) {
+  const configPath = path.join(resolveStorePath(overridePath, scope), "config.json");
+  if (!fs.existsSync(configPath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const profile = parsed && parsed.profile;
+    if (!MEMORY_PROFILES[profile]) throw new Error(`invalid profile '${profile || "missing"}'`);
+    return memoryProfile(profile, scope, configPath);
+  } catch (e) {
+    fail(`Cannot read memory policy '${configPath}': ${e.message}. The file was not modified.`);
+  }
+}
+
+function effectiveMemoryConfig(scope = "workspace", overridePath = null) {
+  if (overridePath) {
+    return readMemoryConfig(scope, overridePath) || memoryProfile(DEFAULT_MEMORY_PROFILE, "default");
+  }
+  if (scope === "workspace") {
+    const workspace = readMemoryConfig("workspace", null);
+    if (workspace) return workspace;
+  }
+  return readMemoryConfig("global", null) || memoryProfile(DEFAULT_MEMORY_PROFILE, "default");
+}
+
+function writeMemoryConfig(scope, overridePath, profile) {
+  const storePath = resolveStorePath(overridePath, scope);
+  const configPath = path.join(storePath, "config.json");
+  fs.mkdirSync(storePath, { recursive: true });
+  const config = {
+    schema_version: CONFIG_SCHEMA_VERSION,
+    profile,
+    configured_at: nowISO(),
+  };
+  atomicWriteJson(configPath, config);
+  return memoryProfile(profile, scope, configPath);
 }
 
 /** Multi-layer path resolution; scope=all + storePath treats it as ROOT (with v1 fallback). */
@@ -471,6 +550,37 @@ function cmdInit(a) {
   process.stdout.write(`Initialized memory store at: ${storePath}\n`);
 }
 
+function cmdConfig(a) {
+  const action = (a.action || "show").toLowerCase();
+  const requestedScope = (a.scope || (action === "show" ? "effective" : "global")).toLowerCase();
+  if (!["global", "workspace", "effective"].includes(requestedScope)) {
+    fail("--scope must be one of: global, workspace, effective.");
+  }
+  if (action === "show") {
+    const config = requestedScope === "effective"
+      ? effectiveMemoryConfig("workspace", a.store_path)
+      : readMemoryConfig(requestedScope, a.store_path) || memoryProfile(DEFAULT_MEMORY_PROFILE, "default");
+    writeOutput(config, a.output);
+    return;
+  }
+  if (requestedScope === "effective") fail("config set/reset requires --scope global or workspace.");
+  if (action === "set") {
+    const profile = requireNonEmpty(a.profile, "profile").toLowerCase();
+    if (!MEMORY_PROFILES[profile]) {
+      fail(`Invalid profile '${profile}'. Must be one of: ${Object.keys(MEMORY_PROFILES).join(", ")}.`);
+    }
+    writeOutput(writeMemoryConfig(requestedScope, a.store_path, profile), a.output);
+    return;
+  }
+  if (action === "reset") {
+    const configPath = path.join(resolveStorePath(a.store_path, requestedScope), "config.json");
+    if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
+    writeOutput({ reset: true, scope: requestedScope, config_path: configPath }, a.output);
+    return;
+  }
+  fail("config action must be one of: show, set, reset.");
+}
+
 function cmdStore(a) {
   if (!VALID_TYPES.includes(a.type)) {
     process.stderr.write(`Error: Invalid memory type '${a.type}'. Must be one of: ${VALID_TYPES.join(", ")}\n`);
@@ -479,6 +589,18 @@ function cmdStore(a) {
   const title = requireNonEmpty(a.title, "title");
   const summary = requireNonEmpty(a.summary, "summary");
   const scopeName = validateScope(a.scope || "global");
+  const intent = (a.intent || "explicit").toLowerCase();
+  validateEnum(intent, ["explicit", "automatic"], "intent");
+  const policy = effectiveMemoryConfig(scopeName, a.store_path);
+  if (intent === "automatic") {
+    if (policy.auto_store === "off" || policy.auto_store === "explicit") {
+      fail(`Automatic storage is disabled by the '${policy.profile}' memory profile.`);
+    }
+    if (!policy.allowed_automatic_types.includes(a.type)) {
+      fail(`Memory type '${a.type}' is not allowed for automatic storage by the '${policy.profile}' profile.`);
+    }
+    requireNonEmpty(a.source_conv_id, "source-conv-id");
+  }
   const visibility = a.visibility || DEFAULT_VISIBILITY[scopeName] || "shared";
   validateEnum(visibility, VISIBILITIES, "visibility");
   if (a.priority !== undefined) validateEnum(a.priority, PRIORITIES, "priority");
@@ -490,6 +612,17 @@ function cmdStore(a) {
   }
   const storePath = resolveStorePath(a.store_path, scopeName);
   const memories = loadMemories(storePath);
+  if (intent === "automatic") {
+    const automaticCount = memories.filter(
+      (m) => m.source_conversation_id === a.source_conv_id && (m.write_intent || "explicit") === "automatic"
+    ).length;
+    if (automaticCount >= policy.max_automatic_memories_per_conversation) {
+      fail(
+        `Automatic memory limit reached for conversation '${a.source_conv_id}' ` +
+        `(${policy.max_automatic_memories_per_conversation}, profile=${policy.profile}).`
+      );
+    }
+  }
   const tags = a.tags ? a.tags.split(",").map((t) => t.trim().toLowerCase()) : [];
   const relatedFiles = a.related_files ? a.related_files.split(",").map((f) => f.trim()) : [];
   const expiresAt = ttlDays === null ? null : new Date(Date.now() + ttlDays * 86400000).toISOString();
@@ -502,6 +635,7 @@ function cmdStore(a) {
     created_at: nowISO(),
     updated_at: nowISO(),
     source_conversation_id: a.source_conv_id || null,
+    write_intent: intent,
     type: a.type,
     title,
     summary,
@@ -528,6 +662,14 @@ function cmdStore(a) {
 
 function cmdSearch(a) {
   const scope = validateScope(a.scope || "all", { allowAll: true });
+  const intent = (a.intent || "explicit").toLowerCase();
+  validateEnum(intent, ["explicit", "automatic"], "intent");
+  if (intent === "automatic") {
+    const policy = effectiveMemoryConfig(scope === "global" ? "global" : "workspace", a.store_path);
+    if (policy.auto_recall === "off" || policy.auto_recall === "explicit") {
+      fail(`Automatic recall is disabled by the '${policy.profile}' memory profile.`);
+    }
+  }
   const limit = validatePositiveInteger(a.limit ?? 5, "limit");
   const query = a.query || "";
   const filterTags = new Set(a.tags ? a.tags.split(",").map((t) => t.trim().toLowerCase()) : []);
@@ -1123,7 +1265,7 @@ function main() {
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
     process.stdout.write(
       "Memory Store CLI (Node.js). Commands:\n" +
-      "  init store search recall list update delete merge archive restore revive stats compress migrate version\n" +
+      "  init config store search recall list update delete merge archive restore revive stats compress migrate version\n" +
       "Usage: memory-store <command> [--key value ...]\n" +
 "       node scripts/memory_cli.js <command> [--key value ...]\n" +
       "Output: results print as JSON to stdout by default; use --output <file> to write a file.\n" +
@@ -1139,11 +1281,13 @@ function main() {
   }
   const command = argv[0];
   const a = parseArgs(argv.slice(1));
+  if (command === "config" && argv[1] && !argv[1].startsWith("--")) a.action = argv[1];
   // --stdout forces JSON to stdout (no file). Output already defaults to stdout
   // when --output is omitted; this makes the intent explicit.
   if (a.stdout) delete a.output;
   const handlers = {
     init: cmdInit,
+    config: cmdConfig,
     store: cmdStore,
     search: cmdSearch,
     recall: cmdRecall,

@@ -55,6 +55,11 @@
       "type": ["string", "null"],
       "description": "Conversation ID from which the memory was extracted. Null if manually created."
     },
+    "write_intent": {
+      "type": "string",
+      "enum": ["explicit", "automatic"],
+      "description": "Whether the write came from an explicit user request or an opted-in automatic memory policy."
+    },
     "type": {
       "type": "string",
       "enum": ["workflow", "decision", "fact", "preference", "debug_solution", "state", "event", "relation"],

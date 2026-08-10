@@ -21,6 +21,8 @@ Use this reference for lifecycle maintenance, privacy expectations, concurrency 
 
 Each store contains an active `memories.json`; archived data is moved to `archive/archived_YYYYMM.json`. The global path is shared by supported Agent platforms on the same user account. The workspace path may be unavailable in read-only or managed workspaces; in that case use a writable approved location or the global store only when the content truly belongs there.
 
+`config.json` is separate from memory data. Installation creates it only after an interactive profile choice or an explicit `--memory-profile` option. A workspace policy overrides the global policy; without either file, the effective profile is `explicit`.
+
 ## Visibility is not a security boundary
 
 `private`, `shared`, and `global` are application-level cooperation labels:

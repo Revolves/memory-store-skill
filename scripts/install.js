@@ -14,6 +14,8 @@
  *   node scripts/install.js --update          Update all detected existing installations
  *   node scripts/install.js --check           Verify installed artifacts without writing
  *   node scripts/install.js --dry-run         Preview installation without writing
+ *   node scripts/install.js --memory-profile explicit
+ *                                              Configure memory policy during installation
  *   node scripts/install.js --list           Just list detected agents
  *   node scripts/install.js --help           Show help
  *
@@ -111,6 +113,7 @@ const AGENT_PLATFORMS = [
 // =============================================================================
 
 const SKILL_DIR = path.resolve(__dirname, "..");
+const MEMORY_PROFILES = ["off", "explicit", "balanced", "proactive"];
 
 const INSTALL_GROUPS = [
   { source: "SKILL.md", label: "SKILL.md" },
@@ -294,17 +297,26 @@ function updateTo(targetDir, { dryRun = false } = {}) {
   };
 }
 
-function initUniversalGlobalStore() {
-  const storeDir = path.join(os.homedir(), ".memory-store");
-  const memFile = path.join(storeDir, "memories.json");
-  if (!fs.existsSync(memFile)) {
-    fs.mkdirSync(storeDir, { recursive: true });
-    fs.writeFileSync(memFile, "[]", "utf-8");
-    fs.writeFileSync(path.join(storeDir, "memories.index.json"), "{}", "utf-8");
-    console.log(`    ✅ Initialized universal global store: ${storeDir}`);
-  } else {
-    console.log(`    ⏭️  Universal global store already exists: ${storeDir}`);
+function configureMemoryProfile(profile, { dryRun = false } = {}) {
+  if (!profile) return;
+  if (!MEMORY_PROFILES.includes(profile)) {
+    throw new Error(`Invalid memory profile '${profile}'. Choose: ${MEMORY_PROFILES.join(", ")}`);
   }
+  const storeDir = path.join(os.homedir(), ".memory-store");
+  const configPath = path.join(storeDir, "config.json");
+  if (dryRun) {
+    console.log(`    🔎 Would set memory profile '${profile}' in ${configPath}`);
+    return;
+  }
+  fs.mkdirSync(storeDir, { recursive: true });
+  const tempPath = `${configPath}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify({
+    schema_version: 1,
+    profile,
+    configured_at: new Date().toISOString(),
+  }, null, 2) + "\n", "utf8");
+  fs.renameSync(tempPath, configPath);
+  console.log(`    ✅ Memory profile '${profile}' configured in ${configPath}`);
 }
 
 // =============================================================================
@@ -337,10 +349,9 @@ function printBanner() {
 // Main
 // =============================================================================
 
-async function main() {
-  const args = process.argv.slice(2);
+async function main(args = process.argv.slice(2)) {
   const booleanOptions = new Set(["--list", "--all", "--update", "--check", "--dry-run", "--help", "-h"]);
-  const valuedOptions = new Set(["--agent", "--target"]);
+  const valuedOptions = new Set(["--agent", "--target", "--memory-profile"]);
   for (let i = 0; i < args.length; i++) {
     const option = args[i];
     if (booleanOptions.has(option)) continue;
@@ -363,6 +374,7 @@ async function main() {
     help: args.includes("--help") || args.includes("-h"),
     agents: [],
     target: null,
+    memoryProfile: null,
   };
 
   // Parse valued options.
@@ -373,7 +385,14 @@ async function main() {
     } else if (args[i] === "--target" && i + 1 < args.length && !args[i + 1].startsWith("--")) {
       flags.target = args[i + 1];
       i++;
+    } else if (args[i] === "--memory-profile" && i + 1 < args.length && !args[i + 1].startsWith("--")) {
+      flags.memoryProfile = args[i + 1].trim().toLowerCase();
+      i++;
     }
+  }
+
+  if (flags.memoryProfile && !MEMORY_PROFILES.includes(flags.memoryProfile)) {
+    throw new Error(`Invalid memory profile '${flags.memoryProfile}'. Choose: ${MEMORY_PROFILES.join(", ")}.`);
   }
 
   const selectorCount = Number(flags.all) + Number(flags.agents.length > 0) + Number(Boolean(flags.target));
@@ -385,6 +404,9 @@ async function main() {
   }
   if (flags.list && (selectorCount > 0 || flags.update || flags.check || flags.dryRun)) {
     throw new Error("--list cannot be combined with install, update, check, or dry-run options.");
+  }
+  if (flags.memoryProfile && (flags.list || flags.update || flags.check)) {
+    throw new Error("--memory-profile is available only during installation; use `memory-store config set` afterward.");
   }
 
   if (flags.help) {
@@ -401,14 +423,17 @@ Usage:
   node scripts/install.js --check [selector] Verify installed files against this source
   node scripts/install.js --dry-run [selector]
                                             Preview without creating or changing files
+  node scripts/install.js --memory-profile <profile>
+                                            Set off, explicit, balanced, or proactive
   node scripts/install.js --list             List detected agents only
   node scripts/install.js --help             Show this help
 
 Selectors:
   --all, --agent <name[,name]>, or --target <path>
 
-Update from npm:
-  npx memory-store-skill@latest --update
+Update after upgrading the npm package:
+  npm i memory-store-skill@latest
+  npx memory-store-update
 
 Configuration roots:
   CLAUDE_CONFIG_DIR and CODEX_CONFIG_DIR override the corresponding default
@@ -543,7 +568,7 @@ Detected platforms:
         console.error(`    ❌ ${agent.label}: ${e.message}`);
       }
     }
-    if (!flags.dryRun && successCount > 0) initUniversalGlobalStore();
+    if (successCount > 0) configureMemoryProfile(flags.memoryProfile, { dryRun: flags.dryRun });
     console.log(`\n${successCount === targets.length ? "✅" : "❌"} ${flags.dryRun ? "Preview" : "Installation"} complete (${successCount}/${targets.length}).`);
     if (!flags.dryRun && successCount > 0) console.log("   Restart your agent sessions for the skill to take effect.");
     process.exitCode = successCount === targets.length ? 0 : 1;
@@ -563,7 +588,7 @@ Detected platforms:
         console.error(`    ❌ ${agent.label}: ${e.message}`);
       }
     }
-    if (!flags.dryRun && successCount > 0) initUniversalGlobalStore();
+    if (successCount > 0) configureMemoryProfile(flags.memoryProfile, { dryRun: flags.dryRun });
     console.log(`\n${successCount === flags.agents.length ? "✅" : "❌"} ${flags.dryRun ? "Preview" : "Installation"} complete (${successCount}/${flags.agents.length}).`);
     if (!flags.dryRun && successCount > 0) console.log("   Restart your agent sessions for the skill to take effect.");
     process.exitCode = successCount === flags.agents.length ? 0 : 1;
@@ -665,9 +690,18 @@ Detected platforms:
     console.log(`  📦 ${agent.label.padEnd(22)} → ${dir}`);
   }
 
-  // --- Step 3: Confirm ---
+  // --- Step 3: Choose memory policy ---
+  console.log("\n─── Memory Policy ───");
+  console.log("  1. explicit  — Store only when the user explicitly asks (recommended)");
+  console.log("  2. balanced  — Automatically keep selected decisions, fixes, workflows, and preferences");
+  console.log("  3. proactive — Automatically keep a broader set of durable memories");
+  console.log("  4. off       — Disable automatic recall and storage");
+  const profileAnswer = await ask("\nChoose [1/2/3/4] (default: 1): ");
+  const profileChoices = { "1": "explicit", "2": "balanced", "3": "proactive", "4": "off" };
+  flags.memoryProfile = profileChoices[profileAnswer || "1"] || "explicit";
+  console.log(`  Selected memory profile: ${flags.memoryProfile}`);
 
-  // --- Step 5: Confirm and execute ---
+  // --- Step 4: Confirm and execute ---
   const confirm = await ask("\nProceed with installation? [Y/n] (default: Y): ");
   if (confirm.toLowerCase() === "n") {
     console.log("❌ Installation cancelled.");
@@ -689,7 +723,7 @@ Detected platforms:
   }
 
   // --- Summary ---
-  if (!flags.dryRun && successCount > 0) initUniversalGlobalStore();
+  if (successCount > 0) configureMemoryProfile(flags.memoryProfile, { dryRun: flags.dryRun });
   console.log(`\n${successCount === targets.length ? "✅" : "❌"} ${flags.dryRun ? "Preview" : "Installation"} complete (${successCount}/${targets.length} targets).`);
   if (!flags.dryRun && successCount > 0) {
     console.log("   Restart your agent sessions for the skill to take effect.");
@@ -697,7 +731,11 @@ Detected platforms:
   process.exitCode = successCount === targets.length ? 0 : 1;
 }
 
-main().catch((e) => {
-  console.error("Fatal error:", e);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((e) => {
+    console.error("Fatal error:", e);
+    process.exit(1);
+  });
+}
+
+module.exports = { main };

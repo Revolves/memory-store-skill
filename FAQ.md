@@ -52,7 +52,7 @@ node scripts/memory_cli.js search --query "部署流程" --scope all \
 
 ## 8. 输出必须写文件吗？
 
-不需要。v1.0.4 默认把 JSON 写到 stdout；`--stdout` 是显式形式。只有确实需要中间文件时才用 `--output result.json`。
+不需要。v1.0.5 默认把 JSON 写到 stdout；`--stdout` 是显式形式。只有确实需要中间文件时才用 `--output result.json`。
 
 ```bash
 node scripts/memory_cli.js search --query "部署" --scope all --stdout
@@ -82,7 +82,7 @@ node scripts/memory_cli.js restore --id mem_xxx --as-agent agent-a --stdout
 
 ## 11. `archive --scope all` 支持吗？
 
-支持，v1.0.4 会处理 global 与 workspace 两层。也可以分别执行，便于使用不同阈值：
+支持，v1.0.5 会处理 global 与 workspace 两层。也可以分别执行，便于使用不同阈值：
 
 ```bash
 node scripts/memory_cli.js archive --scope all \
@@ -115,10 +115,14 @@ CLI 会失败关闭并返回非零退出码，不会把损坏文件当成空库�
 
 ```bash
 npm i memory-store-skill
+npx memory-store-install --agent codex
+
+# 更新时
+npm i memory-store-skill@latest
 npx memory-store-update
 ```
 
-`memory-store-update` 会下载 npm `latest`，只更新已有 skill 安装并校验文件，不修改记忆数据。可用 `--dry-run` 预览，或用 `--agent codex`、`--target <path>` 限定目标。更新后请新开 Agent 会话。
+npm 安装本身不运行生命周期脚本，也不修改 Agent 目录。`memory-store-update` 只从当前本地包同步已有 skill 安装并校验文件，不下载或执行远程代码，也不修改记忆数据。可用 `--dry-run` 预览，或用 `--agent codex`、`--target <path>` 限定目标。更新后请新开 Agent 会话。
 
 从源码安装或更新：
 
@@ -132,6 +136,19 @@ node scripts/install.js --update
 ## 17. 性能有保证吗？
 
 没有固定 SLA。性能受 Node.js 版本、CPU、磁盘、文件大小、记忆内容与查询分布影响。旧基准数据不是当前版本保证；对容量或延迟敏感时，应在目标环境使用当前 Node.js CLI 重新测试。
+
+## 18. 如何调整自动记忆力度？
+
+安装时传入 `--memory-profile off|explicit|balanced|proactive`；未指定时使用安全默认值 `explicit`，而且安装器不会创建记忆数据文件。
+
+```bash
+npx memory-store config show
+npx memory-store config set --profile balanced --scope global
+npx memory-store config set --profile explicit --scope workspace
+npx memory-store config reset --scope workspace
+```
+
+工作区策略优先于全局策略。`off` 和 `explicit` 会拒绝 `--intent automatic` 的访问；`balanced` 每次对话最多自动保留 3 条精选类型，`proactive` 最多 5 条。用户明确要求的操作使用 `--intent explicit`，不受自动策略限制。
 
 ## 更多资料
 

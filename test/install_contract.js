@@ -17,6 +17,7 @@ const claudeConfig = path.join(tempRoot, "claude-config");
 const codexConfig = path.join(tempRoot, "codex-config");
 const manualTarget = path.join(tempRoot, "manual-target");
 const dryRunTarget = path.join(tempRoot, "dry-run-target");
+const policyTarget = path.join(tempRoot, "policy-target");
 
 fs.mkdirSync(tempHome, { recursive: true });
 
@@ -61,10 +62,12 @@ try {
   assert.match(runNode([INSTALLER, "--check", "--dry-run", "--target", dryRunTarget], 1), /cannot be combined/);
   assert.match(runNode([INSTALLER, "--check", "--update", "--agent", "claude"], 1), /cannot be combined/);
 
-  const dryRunOutput = runNode([INSTALLER, "--target", dryRunTarget, "--dry-run"]);
+  const dryRunOutput = runNode([INSTALLER, "--target", dryRunTarget, "--memory-profile", "proactive", "--dry-run"]);
   assert.match(dryRunOutput, /Would copy and verify/);
+  assert.match(dryRunOutput, /Would set memory profile 'proactive'/);
   assert.ok(!fs.existsSync(dryRunTarget), "--dry-run must not create the target directory");
   assert.ok(!fs.existsSync(path.join(tempHome, ".memory-store")), "--dry-run must not initialize a memory store");
+  assert.match(runNode([INSTALLER, "--target", dryRunTarget, "--memory-profile", "invalid"], 1), /Invalid memory profile/);
 
   const installOutput = runNode([INSTALLER, "--agent", "claude,codex"]);
   const claudeSkill = path.join(claudeConfig, "skills", "memory-store");
@@ -81,6 +84,12 @@ try {
   }
 
   runNode([INSTALLER, "--check", "--agent", "claude,codex"]);
+  assert.ok(!fs.existsSync(path.join(tempHome, ".memory-store")), "installation without a profile must not create a global store");
+
+  runNode([INSTALLER, "--target", policyTarget, "--memory-profile", "balanced"]);
+  const policy = JSON.parse(fs.readFileSync(path.join(tempHome, ".memory-store", "config.json"), "utf8"));
+  assert.strictEqual(policy.profile, "balanced");
+  assert.ok(!fs.existsSync(path.join(tempHome, ".memory-store", "memories.json")), "policy setup must not initialize memory data");
 
   fs.appendFileSync(path.join(claudeSkill, "SKILL.md"), "\ncontract-test-stale-copy\n", "utf8");
   const staleOutput = runNode([INSTALLER, "--check", "--agent", "claude"], 1);
@@ -99,15 +108,15 @@ try {
   assert.ok(!fs.existsSync(missingUpdateTarget), "--update must not create a new installation");
 
   fs.appendFileSync(path.join(codexSkill, "SKILL.md"), "\ncontract-test-updater-copy\n", "utf8");
-  const updaterPreview = runNode([UPDATER, "--source", ROOT, "--agent", "codex", "--dry-run"]);
+  const updaterPreview = runNode([UPDATER, "--agent", "codex", "--dry-run"]);
   assert.match(updaterPreview, /1 target\(s\) need update/);
   assert.notStrictEqual(
     hash(path.join(codexSkill, "SKILL.md")),
     hash(path.join(ROOT, "SKILL.md")),
     "updater --dry-run must not change installed files"
   );
-  const updaterOutput = runNode([UPDATER, "--source", ROOT, "--agent", "codex"]);
-  assert.match(updaterOutput, /Updating from memory-store-skill v/);
+  const updaterOutput = runNode([UPDATER, "--agent", "codex"]);
+  assert.match(updaterOutput, /Syncing from the currently installed memory-store-skill package/);
   runNode([INSTALLER, "--check", "--agent", "codex"]);
 
   runNode([INSTALLER, "--target", manualTarget]);
@@ -123,9 +132,9 @@ try {
   }
   assert.match(pkg.scripts.test, /install_contract\.js/);
 
-  const postinstall = fs.readFileSync(path.join(ROOT, "scripts", "postinstall.js"), "utf8");
-  assert.match(postinstall, /execFileSync\(process\.execPath,/);
-  assert.doesNotMatch(postinstall, /\bexecSync\s*\(/);
+  assert.ok(!Object.prototype.hasOwnProperty.call(pkg.scripts, "postinstall"));
+  assert.ok(!pkg.files.includes("scripts/postinstall.js"));
+  assert.ok(!fs.existsSync(path.join(ROOT, "scripts", "postinstall.js")));
 
   const versionOutput = runNode([path.join(manualTarget, "scripts", "memory_cli.js"), "version"]);
   assert.ok(versionOutput.includes(`v${pkg.version}`), "installed CLI version must match package.json");

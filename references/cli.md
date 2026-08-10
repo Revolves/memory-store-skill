@@ -1,10 +1,11 @@
 # CLI Reference
 
-Memory Store v1.0.4 uses `node scripts/memory_cli.js <command>`. Run commands from the installed skill directory with Node.js 18 or newer.
+Memory Store v1.0.5 uses `node scripts/memory_cli.js <command>`. Run commands from the installed skill directory with Node.js 18 or newer.
 
 ## Contents
 
 - [Install and update the skill](#install-and-update-the-skill)
+- [Configure the memory policy](#configure-the-memory-policy)
 - [Output and identity](#output-and-identity)
 - [Initialize and store](#initialize-and-store)
 - [Search and inspect](#search-and-inspect)
@@ -15,14 +16,21 @@ Memory Store v1.0.4 uses `node scripts/memory_cli.js <command>`. Run commands fr
 
 ## Install and update the skill
 
-Install from npm, then update existing Agent-platform copies to npm `latest` when needed:
+Install the npm package, then explicitly install the skill for a platform:
 
 ```bash
 npm i memory-store-skill
+npx memory-store-install --agent codex --memory-profile explicit
+```
+
+To update, explicitly upgrade the npm package and then sync existing Agent-platform copies:
+
+```bash
+npm i memory-store-skill@latest
 npx memory-store-update
 ```
 
-The updater downloads with npm lifecycle scripts disabled, updates only existing installations, verifies copied artifacts, and does not modify memory data.
+npm installation has no lifecycle installer and does not modify Agent directories. The updater reads only from the current local package, updates existing installations, verifies copied artifacts, and does not download or execute remote code or modify memory data.
 
 ```bash
 npx memory-store-update --dry-run
@@ -31,6 +39,19 @@ npx memory-store-update --target /path/to/memory-store
 ```
 
 From a source checkout, run `node scripts/install.js --update` with the same selectors to refresh existing installations from that checkout. `--update` fails instead of creating a missing target.
+
+## Configure the memory policy
+
+The effective profile is the workspace profile when present, otherwise the global profile, otherwise the safe `explicit` default.
+
+```bash
+node scripts/memory_cli.js config show --scope effective --stdout
+node scripts/memory_cli.js config set --profile balanced --scope global --stdout
+node scripts/memory_cli.js config set --profile explicit --scope workspace --stdout
+node scripts/memory_cli.js config reset --scope workspace --stdout
+```
+
+Profiles are `off`, `explicit`, `balanced`, and `proactive`. Explicit user requests use `--intent explicit`. Policy-driven `search` and `store` calls use `--intent automatic`; automatic stores also require `--source-conv-id`. The CLI enforces allowed types and per-conversation limits for automatic writes.
 
 ## Output and identity
 
@@ -65,7 +86,7 @@ node scripts/memory_cli.js store \
   --tags "database,architecture" \
   --importance 0.85 --priority P1 \
   --scope workspace --visibility shared \
-  --agent-id agent-a --stdout
+  --agent-id agent-a --intent explicit --stdout
 ```
 
 Required fields are `--type`, `--title`, and `--summary`. `--title` and `--summary` must not be empty. `--importance`, when supplied, must be between 0 and 1; it defaults to `0.5`. `--ttl-days`, when supplied, must be a positive integer.
@@ -201,6 +222,8 @@ node scripts/memory_cli.js version
 
 | Field | Values |
 |---|---|
+| profile | `off`, `explicit`, `balanced`, `proactive` |
+| intent | `explicit`, `automatic` |
 | scope | `global`, `workspace`; read-only aggregate commands may accept `all` |
 | visibility | `private`, `shared`, `global` |
 | priority | `P1`, `P2`, `P3` |

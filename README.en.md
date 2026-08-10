@@ -6,15 +6,18 @@
 
 The agent identifies durable decisions, fixes, preferences, workflows, and state. A zero-dependency Node.js CLI validates, stores, retrieves, archives, and restores them. There is no daemon and no background transcript scanner.
 
+Read the [security model](SECURITY.md) before installation. The package has no install lifecycle hook, background process, or automatic network request, and `private` is not an encryption boundary.
+
 ## Installation
 
 Node.js 18 or newer is required. The current release is available on npm:
 
 ```bash
 npm i memory-store-skill
+npx memory-store-install --agent codex --memory-profile explicit
 ```
 
-The npm installer automatically detects supported Agent platforms and copies the skill into place. Start a new Agent session after installation so the platform can discover it.
+Installing the npm package does not run lifecycle hooks or modify Agent directories. The explicit second command installs the skill for Codex. Start a new Agent session afterward so the platform can discover it.
 
 Verify the installation:
 
@@ -22,7 +25,7 @@ Verify the installation:
 npx memory-store version
 ```
 
-To inspect platform identifiers or select one manually:
+To inspect platform identifiers or install for another platform:
 
 ```bash
 npx memory-store-install --list
@@ -31,13 +34,32 @@ npx memory-store-install --agent codex
 
 Other identifiers include `claude`, `gemini`, `opencode`, `workbuddy`, `cursor`, `windsurf`, `qoderworkcn`, and `trae-cn`.
 
+### Memory profiles
+
+| Profile | Behavior |
+|---|---|
+| `off` | No automatic recall or storage; explicit commands remain available |
+| `explicit` | Respond only to explicit remember/recall requests; safe default |
+| `balanced` | Automatically retain selected decisions, fixes, workflows, and preferences; up to 3 per conversation |
+| `proactive` | Automatically retain a broader set of durable memories; up to 5 per conversation |
+
+Inspect or change the global profile after installation, or add a workspace override:
+
+```bash
+npx memory-store config show
+npx memory-store config set --profile balanced --scope global
+npx memory-store config set --profile explicit --scope workspace
+npx memory-store config reset --scope workspace
+```
+
 ## Update
 
 ```bash
+npm i memory-store-skill@latest
 npx memory-store-update
 ```
 
-The updater downloads `memory-store-skill@latest` from npm, updates only existing skill installations, verifies the copied files, and leaves memory data unchanged. It does not turn an uninstalled platform into a new installation.
+The first command explicitly upgrades the npm package. The updater then syncs only existing skill installations from that local package, verifies the copied files, and leaves memory data unchanged. It does not download or execute remote code or turn an uninstalled platform into a new installation.
 
 ```bash
 # Preview without writing

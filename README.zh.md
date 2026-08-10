@@ -6,15 +6,18 @@
 
 Agent 负责识别值得保留的决策、排障、偏好、流程和状态；纯 Node.js CLI 负责校验、存储、检索、归档与恢复。没有后台进程，也不会扫描所有对话。
 
+安装前请阅读 [安全边界](SECURITY.md)：本项目没有安装生命周期脚本、后台进程或自动网络请求，`private` 也不是加密边界。
+
 ## 安装
 
 要求 Node.js 18 或更高版本。当前版本已发布到 npm，推荐直接安装：
 
 ```bash
 npm i memory-store-skill
+npx memory-store-install --agent codex --memory-profile explicit
 ```
 
-安装过程中会自动检测支持的 Agent 平台并复制 skill。安装完成后，请新开一个 Agent 会话，让平台重新发现 skill。
+npm 包安装不会运行生命周期脚本，也不会自动修改任何 Agent 目录。第二条显式命令才会把 skill 安装到 Codex；安装完成后，请新开一个 Agent 会话，让平台重新发现 skill。
 
 验证安装：
 
@@ -22,7 +25,7 @@ npm i memory-store-skill
 npx memory-store version
 ```
 
-如果需要查看平台标识或手动指定平台：
+如果需要查看平台标识或安装到其他平台：
 
 ```bash
 npx memory-store-install --list
@@ -31,13 +34,32 @@ npx memory-store-install --agent codex
 
 其他平台标识包括 `claude`、`gemini`、`opencode`、`workbuddy`、`cursor`、`windsurf`、`qoderworkcn` 和 `trae-cn`。
 
+### 记忆策略
+
+| 档位 | 行为 |
+|---|---|
+| `off` | 禁止自动检索和自动存储，显式命令仍可用 |
+| `explicit` | 仅响应用户明确的“记住/回忆”请求，安全默认值 |
+| `balanced` | 自动保留精选的决策、排障、流程和偏好，每次对话最多 3 条 |
+| `proactive` | 自动保留更广泛的耐久记忆，每次对话最多 5 条 |
+
+安装后可以查看或修改全局策略，也可以设置当前工作区覆盖：
+
+```bash
+npx memory-store config show
+npx memory-store config set --profile balanced --scope global
+npx memory-store config set --profile explicit --scope workspace
+npx memory-store config reset --scope workspace
+```
+
 ## 更新
 
 ```bash
+npm i memory-store-skill@latest
 npx memory-store-update
 ```
 
-更新器会从 npm 下载 `memory-store-skill@latest`，只更新已经安装的 skill，复制后自动校验文件，不会修改记忆数据，也不会把未安装的平台变成新安装。
+第一条命令由用户显式升级 npm 包；更新器只从当前本地包同步已经安装的 skill，复制后自动校验文件，不会下载或执行远程代码、修改记忆数据，也不会把未安装的平台变成新安装。
 
 ```bash
 # 只预览，不写入

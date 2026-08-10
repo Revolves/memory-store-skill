@@ -1,4 +1,4 @@
-# Memory Store v1.0.4 — 速查表
+# Memory Store v1.0.5 — 速查表
 
 从 skill 目录执行：`node scripts/memory_cli.js <command>`。要求 Node.js 18+。
 
@@ -6,6 +6,10 @@
 
 ```bash
 npm i memory-store-skill
+npx memory-store-install --agent codex --memory-profile explicit
+
+# 先升级 npm 包，再同步已有安装
+npm i memory-store-skill@latest
 npx memory-store-update
 
 # 预览或只更新一个平台
@@ -13,7 +17,18 @@ npx memory-store-update --dry-run
 npx memory-store-update --agent codex
 ```
 
-更新器下载 npm `latest`，只刷新已有 skill 安装并校验文件，不修改记忆数据。源码安装可使用 `node scripts/install.js --update`。
+npm 安装不会自动修改 Agent 目录。更新器只从当前本地包刷新已有 skill 安装并校验文件，不下载或执行远程代码，也不修改记忆数据。源码安装可使用 `node scripts/install.js --update`。
+
+## 记忆策略
+
+```bash
+node scripts/memory_cli.js config show --scope effective --stdout
+node scripts/memory_cli.js config set --profile balanced --scope global --stdout
+node scripts/memory_cli.js config set --profile explicit --scope workspace --stdout
+node scripts/memory_cli.js config reset --scope workspace --stdout
+```
+
+档位：`off`、`explicit`（默认）、`balanced`、`proactive`。显式请求使用 `--intent explicit`；策略触发使用 `--intent automatic`。
 
 ## 输出
 
@@ -30,8 +45,9 @@ node scripts/memory_cli.js stats --scope all --output stats.json
 | 命令 | 必要参数 | 常用参数 |
 |---|---|---|
 | `init` | `--scope global\|workspace` | `--stdout` |
-| `store` | `--type --title --summary` | `--importance --tags --scope --visibility --priority --ttl-days --agent-id` |
-| `search` | `--query` | `--scope --type --visibility --as-agent --limit --touch` |
+| `config` | `show\|set\|reset` | `--profile --scope` |
+| `store` | `--type --title --summary` | `--intent --source-conv-id --importance --tags --scope --visibility --priority --ttl-days --agent-id` |
+| `search` | `--query` | `--intent --scope --type --visibility --as-agent --limit --touch` |
 | `recall` | `--id` | `--as-agent` |
 | `list` | — | `--scope --type --status --visibility --as-agent` |
 | `update` | `--id` | `--importance --priority --visibility --tags --as-agent` |

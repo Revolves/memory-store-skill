@@ -1,19 +1,36 @@
 ---
 name: memory-store
 description: >-
-  自动存储、检索和维护跨会话、多 Agent 的结构化记忆。用户提到“之前、上次、记得、历史、当时、为什么选、方案、决策、架构、进度、状态、习惯、约定、偏好、排障、接着上次、任务交接”，或说 remember、recall、history、save memory 时使用；对具体历史、进度、偏好、惯例、排障与技术选型原因的问题，必须先调用 memory_cli search，即使平台已经提供 working memory。用户明确要求记住信息，或当前对话形成可跨会话复用的决策、排障结论、流程、偏好或任务状态时，也使用本 skill 存储。不要仅为无历史依赖的一次性问题执行无差别检索。
+  管理用户明确启用的跨会话、多 Agent 结构化记忆。用户明确要求记住、保存、回忆或查询过去内容时使用；已配置 balanced/proactive 策略时，也可在确有历史依赖或形成耐久决策、排障与流程时使用。先读取有效记忆策略，off/explicit 模式不得因普通对话词语自动访问或持久化记忆。
 ---
 
 # Memory Store
 
 使用纯 Node.js CLI 管理全局与工作区两层记忆。由 Agent 判断语义价值，CLI 负责校验、存储、过滤、排序和归档。
 
+## 先读取有效策略
+
+每次准备访问或写入记忆时，先读取有效配置：
+
+```bash
+node scripts/memory_cli.js config show --scope effective --stdout
+```
+
+| profile | 自动检索 | 自动存储 | 单次对话上限 |
+|---|---|---|---|
+| `off` | 禁止 | 禁止 | 0 |
+| `explicit`（默认） | 仅用户明确要求 | 仅用户明确要求 | 0 |
+| `balanced` | 有明确历史依赖时 | decision、debug_solution、workflow、preference | 3 |
+| `proactive` | 有明确历史依赖时 | 所有耐久类型 | 5 |
+
+用户明确要求的操作使用 `--intent explicit`。由策略触发的检索或存储必须使用 `--intent automatic`；自动存储还必须提供稳定的 `--source-conv-id`，并向用户简短说明已保存什么。CLI 会拒绝不符合当前策略的自动操作。
+
 ## 先判断是否检索
 
 按以下优先级执行：
 
-1. **必须检索**：用户引用过去的讨论、决策、进度、状态、偏好、惯例、排障记录；接手其他 Agent 的任务；用户要求确认“是否记得”。加载适用的仓库与 skill 指令后，把 `search` 作为第一个任务动作，再读取项目文件补充。
-2. **按需检索**：新会话与既有工作明显连续、当前上下文缺少决策依据，或任务交接可能存在 shared 记忆。
+1. **显式检索**：用户明确引用过去的讨论、决策、进度、偏好或排障记录，使用 `--intent explicit`。
+2. **策略检索**：仅 `balanced` / `proactive` 可在任务明显延续、存在实际历史依赖时使用 `--intent automatic`。
 3. **跳过检索**：问题自包含且与历史无关，例如一次性解释、翻译或计算。不要为了“每轮都搜”而增加延迟和噪声。
 
 平台注入的 working memory 只是当前会话摘要，不能替代具体历史查询。记忆库无命中时，说明无命中，再从代码、文档或用户提供的信息继续调查；不要猜测历史。
@@ -36,7 +53,7 @@ node scripts/memory_cli.js version
 node scripts/memory_cli.js search \
   --query "数据库 选型" --scope all \
   --type decision,debug_solution \
-  --as-agent <agent-id> --limit 5 --stdout
+  --as-agent <agent-id> --intent explicit --limit 5 --stdout
 ```
 
 任务交接优先检索工作区共享记忆：
@@ -65,7 +82,7 @@ node scripts/memory_cli.js store \
   --tags "database,architecture" \
   --importance 0.85 --priority P1 \
   --scope workspace --visibility shared \
-  --agent-id <agent-id> --stdout
+  --agent-id <agent-id> --intent explicit --stdout
 ```
 
 不要存原始对话全文。单次对话通常不超过 5 条；优先更新既有记忆，避免重复。
