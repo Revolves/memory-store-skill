@@ -3,7 +3,19 @@
   "title": "Memory Entry v2",
   "description": "Schema for a single memory entry (v2: two-layer scope + three-tier visibility, back-compat with v1 fields).",
   "type": "object",
-  "required": ["id", "schema_version", "scope", "type", "title", "summary", "tags", "importance", "access_count", "status"],
+  "required": ["id", "schema_version", "scope", "visibility", "type", "title", "summary", "tags", "importance", "priority", "access_count", "status"],
+  "allOf": [
+    {
+      "if": {
+        "properties": { "visibility": { "const": "private" } },
+        "required": ["visibility"]
+      },
+      "then": {
+        "properties": { "owner_agent": { "type": "string", "minLength": 1 } },
+        "required": ["owner_agent"]
+      }
+    }
+  ],
   "properties": {
     "id": {
       "type": "string",
@@ -50,11 +62,13 @@
     },
     "title": {
       "type": "string",
+      "minLength": 1,
       "maxLength": 100,
       "description": "Short title summarizing the memory (< 50 chars recommended)."
     },
     "summary": {
       "type": "string",
+      "minLength": 1,
       "maxLength": 500,
       "description": "Concise summary of the memory content (< 200 chars recommended)."
     },
@@ -81,7 +95,7 @@
     "access_count": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of times this memory has been recalled."
+      "description": "Number of explicit recalls plus search hits selected with --touch."
     },
     "last_accessed": {
       "type": ["string", "null"],
@@ -113,6 +127,15 @@
       "type": "string",
       "enum": ["active", "archived"],
       "description": "Lifecycle status. archived entries are moved to archive/ directory."
+    },
+    "archived_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the entry was moved to an archive file. Present only while archived."
+    },
+    "_archive_reason": {
+      "type": "string",
+      "description": "Human-readable rule that caused archival. Present only while archived."
     },
     "embedding": {
       "type": ["array", "null"],

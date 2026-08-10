@@ -1,221 +1,166 @@
-[![中文](https://img.shields.io/badge/🇨🇳-中文-blue)](README.zh.md) [![English](https://img.shields.io/badge/🇬🇧-English-green)](README.en.md)
-
 # Memory Store Skill
 
-**Automated conversation memory storage, sharing & retrieval for multi-agent AI workflows**
+[中文](README.zh.md)
 
-> A skill for AI workflows: the agent auto-triggers storage during conversation, then recalls & injects relevant memories in new sessions or handoffs — closing the shared-memory loop for "same work content, across sessions and agents".
+**Structured memory for multi-session, multi-agent workflows.**
 
----
+The agent identifies durable decisions, fixes, preferences, workflows, and state. A zero-dependency Node.js CLI validates, stores, retrieves, archives, and restores them. There is no daemon and no background transcript scanner.
 
-## Table of Contents
+## Installation
 
-1. [Introduction](#1-introduction)
-2. [Features](#2-features)
-3. [Architecture](#3-architecture)
-4. [Installation](#4-installation)
-5. [Quick Start (5 minutes)](#5-quick-start-5-minutes)
-6. [Usage](#6-usage)
-7. [Project Structure](#7-project-structure)
-8. [FAQ](FAQ.md) — Quick answers
-
----
-
-## 1. Introduction
-
-Memory Store is a **lightweight conversation memory skill** for AI agent workflows. It solves three problems:
-
-1. **Cross-session amnesia**: key decisions, debugging solutions and preferences are lost when context ends → stored structurally, recalled automatically next time.
-2. **No sharing between agents**: multiple agent sessions working on the same content don't know each other's progress → `shared` visibility enables seamless handoff.
-3. **Memory bloat**: memories accumulate, retrieval slows, signal-to-noise drops → decay mechanism + archiving keeps the store lean and fresh.
-
-The design holds the **Skill baseline**: `SKILL.md` is the instruction core, the CLI is a lightweight support tool (pure Node.js built-ins, zero dependencies). No standalone system, no daemon. Semantic judgment (what to remember, how to compress, when to recall) belongs to the agent's LLM; the CLI only does deterministic storage and retrieval.
-
----
-
-## 2. Features
-
-| Feature | Description |
-|---------|-------------|
-| Two layers | `global` (shared across projects) + `workspace` (collaboration within a task) |
-| Three-tier visibility | `private` (owner only) / `shared` (collaborators) / `global` (all agents) |
-| 8 memory types | fact / decision / preference / workflow / debug_solution / state / event / relation |
-| Agent-driven triggering | The agent decides in-conversation: store on signal, search on history reference |
-| Auto compression | Agent summarizes raw text into concise memories with LLM; raw text is never stored |
-| Lifecycle | Decay scoring + archive (TTL/decay/importance triple criteria) + merge dedup |
-| Chinese retrieval | Built-in n-gram windows: whole-sentence Chinese queries hit without tokenization |
-| Atomic writes | Temp file + `os.replace`; concurrent agent writes never corrupt data |
-| Multi-platform | Claude Code / Codex / Gemini CLI / OpenCode / WorkBuddy / Cursor / Windsurf / QoderWorkCN / Trae CN |
-
----
-
-## 3. Architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│  Agent Collaboration Layer (multi-agent / multi-session) │
-└───────────────┬─────────────────────────────────────┘
-                │ Agent decides in conversation (LLM semantic judgment)
-┌───────────────▼─────────────────────────────────────┐
-│  Workspace Scope                                    │
-│  {workspace}/.agents/memory-store/    default shared │
-│  └ Current project/task context, progress, decisions │
-└───────────────┬─────────────────────────────────────┘
-                │ Promote / inject
-┌───────────────▼─────────────────────────────────────┐
-│  Global Scope                                       │
-│  ~/.memory-store/                     default global │
-│  └ User preferences, common knowledge, cross-project │
-└─────────────────────────────────────────────────────┘
-```
-
-- **Storage format**: JSON files (agents can read/write directly, easy to backup & migrate)
-- **Concurrency**: atomic writes (tmp + `os.replace`); no locks, no event bus, no daemon
-- **Division of labor**: CLI does deterministic work (parse/dedup/persist/index/score); the agent does semantic work (identify/compress/classify/trigger)
-
----
-
-## 4. Installation
-
-### Option 1: local script install (recommended)
+Node.js 18 or newer is required. The current release is available on npm:
 
 ```bash
-# Clone the repo
+npm i memory-store-skill
+```
+
+The npm installer automatically detects supported Agent platforms and copies the skill into place. Start a new Agent session after installation so the platform can discover it.
+
+Verify the installation:
+
+```bash
+npx memory-store version
+```
+
+To inspect platform identifiers or select one manually:
+
+```bash
+npx memory-store-install --list
+npx memory-store-install --agent codex
+```
+
+Other identifiers include `claude`, `gemini`, `opencode`, `workbuddy`, `cursor`, `windsurf`, `qoderworkcn`, and `trae-cn`.
+
+## Update
+
+```bash
+npx memory-store-update
+```
+
+The updater downloads `memory-store-skill@latest` from npm, updates only existing skill installations, verifies the copied files, and leaves memory data unchanged. It does not turn an uninstalled platform into a new installation.
+
+```bash
+# Preview without writing
+npx memory-store-update --dry-run
+
+# Update one platform
+npx memory-store-update --agent codex
+
+# Update a custom installation directory
+npx memory-store-update --target /path/to/memory-store
+```
+
+Start a new Agent session after updating. Source users can run `node scripts/install.js --update` in the repository to refresh existing installations from the current source.
+
+### Install from source
+
+Use the source route for development, source inspection, or unreleased changes:
+
+```bash
 git clone https://github.com/Revolves/memory-store-skill.git
 cd memory-store-skill
-
-# Auto-detect and install to all detected AI agents
 node scripts/install.js --all
-
-# Install to a specific agent
-node scripts/install.js --agent claude
-
-# List detected agents
-node scripts/install.js --list
 ```
 
-> npm package coming soon. Once published: `npm install -g memory-store-skill`.
+## Core model
 
-### Option 2: manual copy
+| Dimension | Value | Intended use |
+|---|---|---|
+| scope | `global` | stable cross-project preferences and knowledge |
+| scope | `workspace` | project decisions, progress, fixes, and handoffs |
+| visibility | `global` | cross-project cooperative visibility |
+| visibility | `shared` | workspace cooperative visibility |
+| visibility | `private` | returned by the CLI only to the matching `owner_agent` |
+
+> `private` is an agent-identity cooperation filter, not encryption. The JSON files are plaintext and remain readable to users or processes with filesystem access. The CLI does not detect or redact credentials, tokens, keys, or personal information. Do not store secrets.
+
+Eight memory types are supported: `fact`, `decision`, `preference`, `workflow`, `debug_solution`, `state`, `event`, and `relation`.
+
+## Five-minute quick start
+
+The examples below use the npm CLI and do not require entering the installed skill directory.
+
+### 1. Confirm the version
 
 ```bash
-cp -r memory-store ~/.claude/skills/        # Claude Code
-cp -r memory-store ~/.workbuddy/skills/     # WorkBuddy
-cp -r memory-store .agents/skills/          # Project level
+npx memory-store version
 ```
 
-Restart the session after installation. Script paths are relative to the skill dir: `node scripts/memory_cli.js` (pure Node built-ins, no third-party deps).
+The command prints the installed version; see `package.json` for the source version in this repository.
 
----
-
-## 5. Quick Start (5 minutes)
-
-> New to Memory Store? This section covers the minimal flow. Full details in the sections below.
-
-### Step 1: Store a memory
+### 2. Store a workspace decision
 
 ```bash
-node scripts/memory_cli.js store \
-  --type fact \
-  --title "Project tech stack" \
-  --summary "Frontend React, backend Node.js, database SQLite" \
-  --tags "tech-stack,project" \
-  --importance 0.7 \
-  --scope global
+npx memory-store store \
+  --type decision \
+  --title "Database choice" \
+  --summary "Use SQLite for the current local single-user deployment." \
+  --tags "database,architecture" \
+  --importance 0.85 --priority P1 \
+  --scope workspace --visibility shared \
+  --agent-id agent-a --stdout
 ```
 
-### Step 2: Search memories
+### 3. Search
 
 ```bash
-node scripts/memory_cli.js search \
-  --query "tech stack" \
-  --scope all \
-  --limit 5 \
-  --output result.json
+npx memory-store search \
+  --query "database choice" --scope all \
+  --type decision,debug_solution \
+  --as-agent agent-a --limit 5 --stdout
 ```
 
-### Step 3: View results
+JSON is written to stdout by default; `--stdout` is only the explicit form. Use `--output result.json` when a file is useful.
+
+### 4. Hand off to another agent
 
 ```bash
-cat result.json    # View the search results
+npx memory-store search \
+  --query "task topic progress" --scope workspace \
+  --visibility shared,global --as-agent agent-b --limit 10 --stdout
 ```
 
-> ✅ **Done!** You've completed the basic store → search → view flow. Next:
-> - Explore all commands in [Usage](#6-usage)
-> - Read the core rules in [SKILL.md](SKILL.md)
-> - Check [FAQ.md](FAQ.md) when stuck
+## When an agent should search
 
----
+- **Required:** the user asks about prior discussion, decisions, progress, preferences, conventions, or debugging history; or another agent takes over the task.
+- **As needed:** a new session clearly continues existing work, or the current context lacks historical rationale.
+- **Skip:** a self-contained one-off request with no historical dependency.
 
-## 6. Usage
+Platform working memory does not replace a targeted search for specific history. If the memory store has no relevant result, inspect project evidence next and identify the source.
 
-### 5.1 CLI Commands
+## Commands
 
-| Command | Purpose | Key options |
-|---------|---------|-------------|
-| `init` | Initialize store | `--scope global|workspace` |
-| `store` | Store a memory | `--type/--title/--summary/--tags/--importance/--priority/--visibility/--scope/--agent-id/--ttl-days` |
-| `search` | Search memories (cross-layer / visibility) | `--query/--scope all/--visibility/--as-agent/--limit` |
-| `recall` | Fetch detail by ID (+1 access count) | `--id` |
-| `list` | List memories (filter / sort) | `--scope/--type/--tags/--status/--visibility/--sort-by` |
-| `update` | Update a memory (visibility upgrade) | `--id/--visibility/--priority/--importance` |
-| `delete` | Delete a memory | `--id` |
-| `merge` | Merge similar memories | `--ids` |
-| `archive` | Archive stale / low-value memories | `--apply-decay/--min-decay/--before-days` |
-| `stats` | Statistics (layer/visibility/type) | `--scope all` |
-| `compress` | Extract candidate fragments from transcript | `--input` |
+| Command | Purpose |
+|---|---|
+| `init` | initialize a global or workspace store |
+| `store` | write a validated structured memory |
+| `search` | search and filter across stores |
+| `recall` | fetch by ID and record access |
+| `list` | list active or archived memories |
+| `update` | update memory fields |
+| `delete` | delete an active memory |
+| `merge` | merge confirmed duplicate active memories |
+| `archive` | move stale or low-value memories out of the active store |
+| `restore` | restore an archived memory (`revive` is a compatibility alias) |
+| `stats` | inspect counts and distributions |
+| `compress` | extract candidates from a transcript |
+| `migrate` | consolidate legacy global stores |
 
-### 5.2 Quick Examples
+See [references/cli.md](references/cli.md) for exact options and [references/operations.md](references/operations.md) for lifecycle, privacy, concurrency, backup, and recovery boundaries.
 
-```bash
-# Store a decision memory (workspace collaboration)
-node scripts/memory_cli.js store \
-  --type decision --title "DB choice" \
-  --summary "Chose SQLite over PostgreSQL (single-user)" \
-  --tags "database,architecture" --importance 0.85 --priority P1 \
-  --scope workspace --visibility shared --agent-id agent-a
+## Important limitations
 
-# New session: search related memories
-node scripts/memory_cli.js search \
-  --query "database choice" --scope all --as-agent agent-b --limit 5 --output r.json
+- Atomic replacement prevents half-written files and temporary-name collisions, but there is no transaction lock around the full read-modify-write cycle. Concurrent writers can still cause a last-write-wins lost update.
+- `archive --scope all` processes both stores; use separate runs when they need different thresholds. Inspect and restore with `list --status archived`, `recall`, and `restore`.
+- Corrupt JSON causes a non-zero failure and must not be treated as an empty store.
+- `compress` extracts candidates; it does not perform semantic summarization or sensitive-data detection.
+- Performance varies with hardware, Node.js version, disk, and store size. Benchmark your own workload.
 
-# Handoff: pull prior agent's shared memories
-node scripts/memory_cli.js search \
-  --query "work topic" --scope workspace --visibility shared,global --limit 10
+## Documentation
 
-# Routine maintenance: archive (run for each scope separately)
-node scripts/memory_cli.js archive --scope global --apply-decay --min-decay 0.15 --output a.json
-node scripts/memory_cli.js archive --scope workspace --apply-decay --min-decay 0.15 --output b.json
-```
-
-### 5.3 Agent Calling View
-
-The skill is designed for **agent-driven usage**: the agent decides in-conversation when to call the CLI.
-
-- **On-demand record**: when the agent identifies valuable information (decision/debug/preference/fact/state...), it compresses the content with LLM and calls `store`.
-- **On-demand recall**: on new conversations, topic continuation, handoff, or history references, the agent calls `search` to retrieve relevant memories and inject them into context.
-
----
-
-## 6. Project Structure
-
-```
-memory-store/
-├── CHEATSHEET.md                  # CLI quick reference (one-pager)
-├── SKILL.md                      # Skill instruction core (triggers + agent behavior rules)
-├── README.md / README.en.md      # This document (English)
-├── FAQ.md                        # Frequently asked questions
-├── scripts/
-│   ├── memory_cli.js             # Core CLI (11 commands, pure Node built-ins)
-│   └── install.js                # Auto-installer (detect agents + install)
-├── references/
-│   └── memory_schema.json        # Data contract (JSON Schema)
-├── examples/
-│   └── example_memories.json     # Example memories (incl. shared/private collaboration)
-├── package.json                  # npm package configuration
-```
-
----
+- [SKILL.md](SKILL.md): minimal agent behavior
+- [CHEATSHEET.md](CHEATSHEET.md): one-page command reference
+- [FAQ.md](FAQ.md): common questions and boundaries
 
 ## License
 

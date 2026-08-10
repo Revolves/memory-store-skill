@@ -1,93 +1,111 @@
-# Memory Store — 速查表 (Cheat Sheet)
+# Memory Store v1.0.4 — 速查表
 
-> 一页纸快速参考。完整说明见 [SKILL.md](SKILL.md)。
+从 skill 目录执行：`node scripts/memory_cli.js <command>`。要求 Node.js 18+。
 
-## CLI 命令一览
+## 安装与更新
 
-| 命令 | 用途 | 必填参数 | 关键可选参数 |
-|------|------|---------|-------------|
-| `init` | 初始化存储目录 | `--scope global\|workspace` | — |
-| `store` | 存储一条记忆 | `--type --title --summary --importance` | `--tags --priority --scope --visibility --agent-id --ttl-days` |
-| `search` | 检索记忆 | `--query --output` | `--scope --visibility --as-agent --limit` |
-| `recall` | 取完整详情 | `--id --output` | — |
-| `list` | 列出记忆 | `--output` | `--scope --type --status --visibility --sort-by` |
-| `update` | 更新记忆 | `--id` | `--visibility --priority --importance --tags` |
-| `delete` | 删除记忆 | `--id` | — |
-| `merge` | 合并相似记忆 | `--ids` | — |
-| `archive` | 归档过期记忆 | `--scope` | `--apply-decay --min-decay --before-days` |
-| `stats` | 统计分布 | `--scope` | `--output` |
-| `compress` | 从 transcript 提取候选 | `--input` | `--output` |
-
-## 快速示例
-
-### 存储
 ```bash
-# 决策（工作区协作共享）
-node scripts/memory_cli.js store --type decision --title "数据库选型" \
-  --summary "选择 SQLite 而非 PostgreSQL" --tags "database" \
-  --importance 0.85 --priority P1 --scope workspace --visibility shared
+npm i memory-store-skill
+npx memory-store-update
 
-# 偏好（全局可见）
-node scripts/memory_cli.js store --type preference --title "代码风格" \
-  --summary "使用 2 空格缩进" --tags "style" \
-  --importance 0.6 --scope global
+# 预览或只更新一个平台
+npx memory-store-update --dry-run
+npx memory-store-update --agent codex
 ```
 
-### 检索
+更新器下载 npm `latest`，只刷新已有 skill 安装并校验文件，不修改记忆数据。源码安装可使用 `node scripts/install.js --update`。
+
+## 输出
+
 ```bash
-# 跨层搜索
-node scripts/memory_cli.js search --query "数据库" --scope all --limit 5 --output r.json
+# 默认 JSON 到 stdout；--stdout 是显式形式
+node scripts/memory_cli.js stats --scope all --stdout
 
-# 按类型过滤
-node scripts/memory_cli.js search --query "部署" --type workflow --scope all --limit 3
-
-# 接手他人工作（拉 shared 记忆）
-node scripts/memory_cli.js search --query "项目进度" --scope workspace --visibility shared --limit 10
-```
-
-### 维护
-```bash
-node scripts/memory_cli.js archive --scope all --apply-decay --min-decay 0.15 --output archived.json
-node scripts/memory_cli.js merge --ids mem_xxx,mem_yyy
+# 需要文件时
 node scripts/memory_cli.js stats --scope all --output stats.json
 ```
 
-## 记忆类型
+## 常用命令
 
-| 类型 | 用途 | 默认 priority |
-|------|------|---------------|
-| `decision` | 技术选型/架构决策 | P1 |
-| `debug_solution` | 排障方案 | P1 |
-| `workflow` | 部署/操作流程 | P2 |
-| `preference` | 用户偏好/习惯 | P2 |
-| `fact` | 事实/配置信息 | P2 |
-| `state` | 进度/状态/待办 | P3 |
-| `event` | 发布/完成事件 | P3 |
-| `relation` | 依赖/关联关系 | P2 |
+| 命令 | 必要参数 | 常用参数 |
+|---|---|---|
+| `init` | `--scope global\|workspace` | `--stdout` |
+| `store` | `--type --title --summary` | `--importance --tags --scope --visibility --priority --ttl-days --agent-id` |
+| `search` | `--query` | `--scope --type --visibility --as-agent --limit --touch` |
+| `recall` | `--id` | `--as-agent` |
+| `list` | — | `--scope --type --status --visibility --as-agent` |
+| `update` | `--id` | `--importance --priority --visibility --tags --as-agent` |
+| `delete` | `--id` | `--as-agent` |
+| `merge` | `--ids` | `--scope --as-agent` |
+| `archive` | — | `--scope --apply-decay --min-decay --before-days` |
+| `restore` | `--id` | `--as-agent`; `revive` 为别名 |
+| `stats` | — | `--scope` |
+| `compress` | `--input` | — |
+| `migrate` | — | `--dry-run` |
+| `version` | — | 也支持 `-v` / `--version` |
 
-## 可见性三档
+## 存储与检索
 
-| visibility | 谁可读 | 默认场景 |
-|------------|--------|---------|
-| `global` | 所有 Agent（跨项目） | 全局库记忆 |
-| `shared` | 同工作区协作 Agent | 工作区记忆 |
-| `private` | 仅写入者 | 隐私/临时内容 |
+```bash
+# 工作区共享决策
+node scripts/memory_cli.js store \
+  --type decision --title "数据库选型" \
+  --summary "选择 SQLite；当前为单用户本地部署。" \
+  --tags "database,architecture" --importance 0.85 --priority P1 \
+  --scope workspace --visibility shared --agent-id agent-a --stdout
 
-## 关键阈值
+# 多类型跨层搜索；默认只读
+node scripts/memory_cli.js search \
+  --query "数据库 选型" --scope all \
+  --type decision,debug_solution \
+  --as-agent agent-a --limit 5 --stdout
 
-| 项目 | 值 |
-|------|-----|
-| 单次对话存储上限 | 5 条 |
-| 注入阈值 | score ≥ 0.5 |
-| 不注入阈值 | score < 0.3 |
-| 归档衰减分阈值 | < 0.15 |
-| 自动归档天数 | 60 天未访问 |
-| 锁超时 | 30 秒 |
+# 仅在希望记录实际命中访问时加 --touch
+node scripts/memory_cli.js search \
+  --query "部署流程" --scope all --as-agent agent-a \
+  --limit 5 --touch --stdout
+```
 
-## 路径
+## 任务交接
 
-| 存储层 | 位置 |
-|--------|------|
-| 全局库 | `~/.memory-store/` |
-| 工作区库 | `{project}/.agents/memory-store/` |
-| 归档 | `{store}/archive/archived_YYYYMM.json` |
+```bash
+node scripts/memory_cli.js search \
+  --query "任务主题 进度" --scope workspace \
+  --visibility shared,global --as-agent agent-b --limit 10 --stdout
+```
+
+## 归档与恢复
+
+```bash
+node scripts/memory_cli.js archive \
+  --scope all --apply-decay --min-decay 0.15 --stdout
+
+node scripts/memory_cli.js list \
+  --scope all --status archived --as-agent agent-a --stdout
+
+node scripts/memory_cli.js recall \
+  --id mem_xxx --as-agent agent-a --stdout
+
+node scripts/memory_cli.js restore \
+  --id mem_xxx --as-agent agent-a --stdout
+```
+
+普通 search 不检索归档；不要使用未文档化的 `--include-archived`。
+
+## 枚举
+
+| 字段 | 值 |
+|---|---|
+| type | `fact`, `decision`, `preference`, `workflow`, `debug_solution`, `state`, `event`, `relation` |
+| visibility | `private`, `shared`, `global` |
+| scope | `global`, `workspace`;聚合命令支持 `all` |
+| priority | `P1`, `P2`, `P3` |
+
+## 安全与并发
+
+- `private` 是 Agent 身份过滤，不是加密；不要存密钥、凭据、令牌或原始个人信息。
+- 原子替换防止半文件，但不提供完整事务锁；并发写入仍可能最后写覆盖。
+- 批量 archive、merge、delete 前备份 `memories.json` 与 `archive/`。
+- JSON 损坏时 CLI 应失败退出，不要当空库继续写入。
+
+完整说明见 [references/cli.md](references/cli.md) 与 [references/operations.md](references/operations.md)。

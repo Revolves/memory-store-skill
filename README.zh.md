@@ -1,222 +1,167 @@
-[![中文](https://img.shields.io/badge/🇨🇳-中文-blue)](README.zh.md) [![English](https://img.shields.io/badge/🇬🇧-English-green)](README.en.md)
-
 # Memory Store Skill
 
-**自动对话记忆存储、共享与检索 · 面向多 Agent 协同的 AI 工作场景**
+[English](README.en.md)
 
-> 一个面向 AI 工作场景的全局、多任务、多对话记忆技能（skill）。Agent 在对话中自动判断触发，把值得保留的信息结构化存储为记忆；新会话、新 Agent 接手时按需检索注入，实现"同一工作内容、不同会话、不同 Agent"的共享记忆闭环。
+**面向跨会话、多 Agent 协作的结构化记忆 skill。**
 
----
+Agent 负责识别值得保留的决策、排障、偏好、流程和状态；纯 Node.js CLI 负责校验、存储、检索、归档与恢复。没有后台进程，也不会扫描所有对话。
 
-## 目录
+## 安装
 
-1. [项目介绍](#1-项目介绍)
-2. [核心特性](#2-核心特性)
-3. [架构概览](#3-架构概览)
-4. [安装部署](#4-安装部署)
-5. [快速开始（5 分钟）](#5-快速开始5-分钟)
-6. [使用方式](#6-使用方式)
-7. [目录结构](#7-目录结构)
-8. [常见问题](FAQ.md) — 快速查答案
-
----
-
-## 1. 项目介绍
-
-Memory Store 是一个**轻量级对话记忆技能**，服务于 AI Agent 工作场景。它解决三类问题：
-
-1. **跨会话遗忘**：对话结束后，关键决策、排障方案、用户偏好会随上下文丢失 → 结构化存储，下次自动想起。
-2. **多 Agent 不共享**：多个 Agent 会话处理同一工作内容时互相不知道对方进度 → 通过 `shared` 可见性共享，接手即知前序工作。
-3. **记忆膨胀**：记忆越积越多，检索变慢、信噪比下降 → 衰减机制 + 归档清理，保持长期可用。
-
-设计坚持 **Skill 基本线**：`SKILL.md` 是指令核心，CLI 是轻量支撑工具（纯 Node.js 内置模块、零依赖），不构建独立软件系统、不设后台进程。语义判断（什么值得记、如何压缩、何时检索）交给 Agent 的 LLM 能力，CLI 只做确定性的存储与检索。
-
----
-
-## 2. 核心特性
-
-| 特性 | 说明 |
-|------|------|
-| 两层分层 | `global`（全局共享，跨项目）+ `workspace`（工作区协作，同任务共享） |
-| 三档可见性 | `private`（仅自己）/ `shared`（同工作内容协作 Agent）/ `global`（所有 Agent） |
-| 8 类记忆 | fact / decision / preference / workflow / debug_solution / state / event / relation |
-| Agent 判断触发 | 对话中由 Agent 自主识别信号，决定何时存储、何时检索 |
-| 自动压缩 | Agent 用 LLM 能力把原文压缩为精炼摘要再存，不存原文 |
-| 生命周期 | 衰减评分 + 归档（TTL/衰减/重要性三重判据）+ 合并去冗余 |
-| 中文检索 | 内置 n-gram 窗口，中文整句查询无需分词即可命中 |
-| 原子写 | 临时文件 + 原子替换，多 Agent 并发写入不损坏数据 |
-| 多平台 | Claude Code / Codex / Gemini CLI / OpenCode / WorkBuddy / Cursor / Windsurf / QoderWorkCN / Trae CN |
-
----
-
-## 3. 架构概览
-
-```
-┌─────────────────────────────────────────────────────┐
-│  Agent 协作层（多 Agent / 多会话，各持身份）           │
-└───────────────┬─────────────────────────────────────┘
-                │ 对话中判断触发（LLM 语义判断）
-┌───────────────▼─────────────────────────────────────┐
-│  工作区记忆 workspace scope                            │
-│  {workspace}/.agents/memory-store/   默认 shared      │
-│  └ 当前项目/任务上下文、进度状态、中间决策             │
-└───────────────┬─────────────────────────────────────┘
-                │ 沉淀 promote / 回灌 inject
-┌───────────────▼─────────────────────────────────────┐
-│  全局记忆 global scope                                │
-│  ~/.memory-store/                    默认 global      │
-│  └ 用户偏好、通用知识、历史决策（跨项目共享）           │
-└─────────────────────────────────────────────────────┘
-```
-
-- **存储格式**：JSON 文件（Agent 可直接读写、便于备份迁移、千条级性能足够）
-- **并发控制**：原子写（tmp + 原子替换），无锁、无事件总线、无守护进程
-- **分工**：CLI 做确定性工作（解析/去重/落盘/索引/打分），Agent 做语义工作（识别/压缩/分类/触发判断）
-
----
-
-## 4. 安装部署
-
-### 方式一：本地脚本安装（推荐）
+要求 Node.js 18 或更高版本。当前版本已发布到 npm，推荐直接安装：
 
 ```bash
-# 克隆仓库
+npm i memory-store-skill
+```
+
+安装过程中会自动检测支持的 Agent 平台并复制 skill。安装完成后，请新开一个 Agent 会话，让平台重新发现 skill。
+
+验证安装：
+
+```bash
+npx memory-store version
+```
+
+如果需要查看平台标识或手动指定平台：
+
+```bash
+npx memory-store-install --list
+npx memory-store-install --agent codex
+```
+
+其他平台标识包括 `claude`、`gemini`、`opencode`、`workbuddy`、`cursor`、`windsurf`、`qoderworkcn` 和 `trae-cn`。
+
+## 更新
+
+```bash
+npx memory-store-update
+```
+
+更新器会从 npm 下载 `memory-store-skill@latest`，只更新已经安装的 skill，复制后自动校验文件，不会修改记忆数据，也不会把未安装的平台变成新安装。
+
+```bash
+# 只预览，不写入
+npx memory-store-update --dry-run
+
+# 只更新指定平台
+npx memory-store-update --agent codex
+
+# 更新自定义安装目录
+npx memory-store-update --target /path/to/memory-store
+```
+
+更新完成后请新开 Agent 会话。源码用户也可以在仓库中运行 `node scripts/install.js --update`，用当前源码刷新已有安装。
+
+### 从源码安装
+
+适合参与开发、检查源码或使用尚未发布的版本：
+
+```bash
 git clone https://github.com/Revolves/memory-store-skill.git
 cd memory-store-skill
-
-# 自动检测并安装到所有已安装的 AI Agent 平台
 node scripts/install.js --all
-
-# 安装到指定平台
-node scripts/install.js --agent claude
-
-# 查看可安装的平台列表
-node scripts/install.js --list
 ```
 
-> npm 包即将发布。发布后可用 `npm install -g memory-store-skill`。
+## 核心模型
 
-### 方式二：手动复制
+| 维度 | 值 | 用途 |
+|---|---|---|
+| scope | `global` | 跨项目稳定偏好、通用知识 |
+| scope | `workspace` | 当前项目决策、进度、排障与交接 |
+| visibility | `global` | 跨项目协作可见 |
+| visibility | `shared` | 当前工作区协作可见 |
+| visibility | `private` | 仅匹配 `owner_agent` 的 CLI 请求返回 |
+
+> `private` 只是基于 Agent 身份的协作过滤。JSON 文件是明文；拥有文件读取权限的用户或进程仍可直接查看。CLI 不自动检测或脱敏密钥、凭据、令牌和个人信息，请勿存储秘密。
+
+支持 8 类记忆：`fact`、`decision`、`preference`、`workflow`、`debug_solution`、`state`、`event`、`relation`。
+
+## 5 分钟上手
+
+以下示例使用 npm 提供的 CLI，无需进入 skill 安装目录。
+
+### 1. 确认版本
 
 ```bash
-cp -r memory-store ~/.claude/skills/        # Claude Code
-cp -r memory-store ~/.workbuddy/skills/     # WorkBuddy
-cp -r memory-store .agents/skills/          # 项目级
+npx memory-store version
 ```
 
-安装后**新开会话**生效。脚本路径相对 skill 目录：`node scripts/memory_cli.js`（纯 Node.js 内置模块，无需第三方依赖）。
+命令会输出当前安装版本；本仓库源码版本见 `package.json`。
 
----
-
-## 5. 快速开始（5 分钟）
-
-> 新手先看这里——只讲最核心的流程，完整功能介绍见后续章节。
-
-### 第 1 步：存储一条记忆
+### 2. 存储工作区决策
 
 ```bash
-node scripts/memory_cli.js store \
-  --type fact \
-  --title "项目技术栈" \
-  --summary "前端 React，后端 Node.js，数据库 SQLite" \
-  --tags "tech-stack,project" \
-  --importance 0.7 \
-  --scope global
+npx memory-store store \
+  --type decision \
+  --title "数据库选型" \
+  --summary "选择 SQLite；当前为单用户本地部署。" \
+  --tags "database,architecture" \
+  --importance 0.85 --priority P1 \
+  --scope workspace --visibility shared \
+  --agent-id agent-a --stdout
 ```
 
-### 第 2 步：检索记忆
+### 3. 检索
 
 ```bash
-node scripts/memory_cli.js search \
-  --query "技术栈" \
-  --scope all \
-  --limit 5 \
-  --output result.json
+npx memory-store search \
+  --query "数据库 选型" --scope all \
+  --type decision,debug_solution \
+  --as-agent agent-a --limit 5 --stdout
 ```
 
-### 第 3 步：查看结果
+默认已经输出 JSON 到 stdout；`--stdout` 只是显式写法。需要文件时使用 `--output result.json`。
+
+### 4. 交接给其他 Agent
 
 ```bash
-cat result.json    # 查看检索结果
+npx memory-store search \
+  --query "任务主题 进度" --scope workspace \
+  --visibility shared,global --as-agent agent-b --limit 10 --stdout
 ```
 
-> ✅ **完成！** 你已经完成了记忆的存、查、用全流程。接下来可以：
-> - 了解 [使用方式](#6-使用方式) 的全部命令
-> - 阅读 [SKILL.md](SKILL.md) 核心规则
-> - 遇到问题查 [FAQ.md](FAQ.md)
+## Agent 何时检索
 
----
+- **必须检索**：用户问之前的讨论、决策、进度、偏好、惯例、排障，或 Agent 接手任务。
+- **按需检索**：新会话明显延续既有工作，或当前上下文缺少历史依据。
+- **无需检索**：一次性、自包含、与历史无关的问题。
 
-## 6. 使用方式
+working memory 不能替代对具体历史的检索。若记忆库无命中，再读取项目文件补充，并明确数据来源。
 
-### 5.1 CLI 子命令
+## 常用命令
 
-| 子命令 | 用途 | 关键参数 |
-|--------|------|----------|
-| `init` | 初始化存储目录 | `--scope global|workspace` |
-| `store` | 存储一条记忆 | `--type/--title/--summary/--tags/--importance/--priority/--visibility/--scope/--agent-id/--ttl-days` |
-| `search` | 检索记忆（跨层/可见性过滤） | `--query/--scope all/--visibility/--as-agent/--limit` |
-| `recall` | 按 ID 取详情（+1 访问计数） | `--id` |
-| `list` | 列出记忆（过滤/排序） | `--scope/--type/--tags/--status/--visibility/--sort-by` |
-| `update` | 更新记忆（可升级可见性） | `--id/--visibility/--priority/--importance` |
-| `delete` | 删除记忆 | `--id` |
-| `merge` | 合并相似记忆 | `--ids` |
-| `archive` | 归档过期/低价值记忆 | `--apply-decay/--min-decay/--before-days` |
-| `stats` | 统计（层/可见性/类型分布） | `--scope all` |
-| `compress` | 从 transcript 提取候选片段 | `--input` |
+| 命令 | 用途 |
+|---|---|
+| `init` | 初始化 global 或 workspace 存储 |
+| `store` | 写入结构化记忆 |
+| `search` | 跨层搜索与过滤 |
+| `recall` | 按 ID 读取并记录访问 |
+| `list` | 列出 active 或 archived 记忆 |
+| `update` | 更新记忆字段 |
+| `delete` | 删除 active 记忆 |
+| `merge` | 合并确认重复的 active 记忆 |
+| `archive` | 将过期/低价值记忆移出主库 |
+| `restore` | 将归档记忆恢复到主库（`revive` 为兼容别名） |
+| `stats` | 查看分布与数量 |
+| `compress` | 从 transcript 提取候选片段 |
+| `migrate` | 迁移旧版全局存储 |
 
-### 5.2 快速示例
+完整参数见 [references/cli.md](references/cli.md)，维护、隐私、并发与恢复边界见 [references/operations.md](references/operations.md)。
 
-```bash
-# 存储一条决策记忆（工作区协作共享）
-node scripts/memory_cli.js store \
-  --type decision --title "数据库选型" \
-  --summary "选择 SQLite 而非 PostgreSQL，单用户场景" \
-  --tags "database,architecture" --importance 0.85 --priority P1 \
-  --scope workspace --visibility shared --agent-id agent-a
+## 重要限制
 
-# 新会话检索相关记忆
-node scripts/memory_cli.js search \
-  --query "数据库选型" --scope all --as-agent agent-b --limit 5 --output r.json
+- 原子替换可防止半文件和临时文件冲突，但没有覆盖完整 read-modify-write 的事务锁；高并发写入仍可能发生最后写覆盖。
+- `archive --scope all` 可处理两层，也可分别使用不同阈值；用 `list --status archived`、`recall` 和 `restore` 检查与恢复。
+- 损坏 JSON 会令 CLI 失败退出，不应被当成空库继续写入。
+- `compress` 只提取候选，不会自动总结，也不会检测敏感信息。
+- 性能取决于机器、Node.js 版本、磁盘与记忆规模；请以自己的基准为准。
 
-# 接手他人工作：拉取前序 Agent 的 shared 记忆
-node scripts/memory_cli.js search \
-  --query "工作主题" --scope workspace --visibility shared,global --limit 10
+## 文档
 
-# 例行维护：归档低价值/过期记忆（分全局和工作区两次）
-node scripts/memory_cli.js archive --scope global --apply-decay --min-decay 0.15 --output a.json
-node scripts/memory_cli.js archive --scope workspace --apply-decay --min-decay 0.15 --output b.json
-```
+- [SKILL.md](SKILL.md)：Agent 的最小行为规则
+- [CHEATSHEET.md](CHEATSHEET.md)：一页命令速查
+- [FAQ.md](FAQ.md)：常见问题与边界
 
-### 5.3 Agent 调用视角
+## License
 
-本 skill 的调用方式：**Agent 在对话中自主决策、调用 CLI**。
-
-- **按需记录**：对话中识别到值得保留的信息（决策/排障/偏好/事实/状态…）→ LLM 压缩为精炼摘要 → 调用 `store` 存储。
-- **按需读取**：新对话、话题延续、任务交接、用户引用历史时主动 `search` 检索相关记忆，注入到当前上下文。
-
----
-
-## 6. 目录结构
-
-```
-memory-store/
-├── CHEATSHEET.md                  # CLI 速查表（一页纸）
-├── SKILL.md                      # 技能指令核心（触发词 + Agent 行为规则）
-├── README.md / README.zh.md      # 本文档（中文版）
-├── FAQ.md                        # 常见问题解答
-├── scripts/
-│   ├── memory_cli.js             # 核心 CLI（11 子命令，纯 Node 内置模块）
-│   └── install.js                # 自动安装脚本（检测 Agent 平台 + 安装）
-├── references/
-│   └── memory_schema.json        # 数据契约（JSON Schema）
-├── examples/
-│   └── example_memories.json     # 示例记忆（含 shared/private 协作示例）
-├── package.json                  # npm 包配置
-```
-
----
-
-## 许可证
-
-MIT License。
+MIT License.

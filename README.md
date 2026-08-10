@@ -1,75 +1,84 @@
 <p align="center">
   <h1 align="center">🧠 Memory Store Skill</h1>
+  <p align="center"><strong>跨会话、多 Agent 的结构化记忆 · Structured memory for AI agents</strong></p>
   <p align="center">
-    <strong>对话记忆存储、共享与检索 · Conversation Memory for AI Agents</strong>
+    <a href="README.zh.md">中文文档</a> · <a href="README.en.md">English docs</a>
   </p>
   <p align="center">
-    <a href="README.zh.md">
-      <img src="https://img.shields.io/badge/🇨🇳-中文文档-1a73e8?style=for-the-badge&logo=markdown" alt="中文文档">
-    </a>
-    &nbsp;&nbsp;
-    <a href="README.en.md">
-      <img src="https://img.shields.io/badge/🇬🇧-English Documentation-2ea44f?style=for-the-badge&logo=markdown" alt="English Documentation">
-    </a>
-  </p>
-  <p align="center">
-    <img src="https://img.shields.io/badge/version-1.0.2-important?style=flat-square" alt="1.0.2">
-    <img src="https://img.shields.io/badge/platform-9_Agent_CLIs-8A2BE2?style=flat-square" alt="9 platforms">
-    <img src="https://img.shields.io/badge/language-Node.js-339933?style=flat-square&logo=nodedotjs" alt="Node.js">
+    <a href="https://www.npmjs.com/package/memory-store-skill"><img src="https://img.shields.io/npm/v/memory-store-skill?style=flat-square&logo=npm" alt="npm version"></a>
+    <img src="https://img.shields.io/badge/runtime-Node.js%2018%2B-339933?style=flat-square&logo=nodedotjs" alt="Node.js 18+">
+    <img src="https://img.shields.io/badge/dependencies-zero-2ea44f?style=flat-square" alt="zero runtime dependencies">
   </p>
 </p>
 
----
+Memory Store 是一个轻量级 Agent skill：Agent 负责判断什么值得记、何时检索，纯 Node.js CLI 负责校验、存储、过滤、排序和归档。
 
-## 选择语言 · Choose Language
+Memory Store is a lightweight agent skill. The agent decides what is worth remembering and when history is relevant; a zero-dependency Node.js CLI handles validation, persistence, filtering, ranking, and archiving.
 
-| 语言 Language | 说明 | 入口 |
-|---------------|------|------|
-| 🇨🇳 **中文** | 面向中文用户，技能使用、安装部署、技术说明 | [→ 中文文档](README.zh.md) |
-| 🇬🇧 **English** | For English-speaking users: usage, installation, technical docs | [→ English Docs](README.en.md) |
+## Install · 安装
 
----
+Requires Node.js 18+ · 需要 Node.js 18+
 
-<div align="center">
-  <a href="README.zh.md">
-    <img src="https://img.shields.io/badge/📖-阅读中文文档-1a73e8?style=for-the-badge" alt="阅读中文文档">
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="README.en.md">
-    <img src="https://img.shields.io/badge/📖-Read English Docs-2ea44f?style=for-the-badge" alt="Read English Docs">
-  </a>
-</div>
+```bash
+npm i memory-store-skill
+```
 
----
+The npm installer automatically detects supported Agent platforms and installs the skill. Start a new Agent session after installation.
 
-## 快速预览 · Quick Preview
+npm 安装器会自动检测支持的 Agent 平台并安装 skill。安装完成后，请新开一个 Agent 会话。
 
-**Memory Store** 是一个轻量级对话记忆技能，为多 Agent 协作场景而生。
+```bash
+# Verify · 验证
+npx memory-store version
 
-A lightweight conversation memory skill for multi-agent AI workflows.
+# Select a platform manually · 手动指定平台
+npx memory-store-install --list
+npx memory-store-install --agent codex
+```
 
-| 能力 Capability | 中文 | English |
-|-----------------|------|---------|
-| 两层存储 | 全局（跨项目）+ 工作区（任务内） | global + workspace |
-| 三层可见性 | private / shared / global | private / shared / global |
-| 8 类记忆 | fact / decision / preference / workflow / debug_solution / state / event / relation | same |
-| 触发方式 | Agent 对话中自主判断 | Agent-driven in-conversation |
-| 检索算法 | 关键词 + 中文 n-gram + 艾宾浩斯衰减 | keyword + Chinese n-gram + Ebbinghaus decay |
-| 性能 | 1000 条检索 <20ms 算法层 | <20ms algorithm at 1k entries |
-| 安装 | `npm install -g memory-store-skill` | `npm install -g memory-store-skill` |
+## Update · 更新
 
----
+```bash
+npx memory-store-update
+```
 
-## 快速入门 · Quick Start
+This downloads npm `latest`, updates only existing skill installations, verifies the result, and leaves memory data unchanged.
 
-- **新手？** 先看 [5 分钟快速开始](README.zh.md#5-快速开始5-分钟)（中文） / [5-min Quick Start](README.en.md#5-quick-start-5-minutes)（English）
-- **查命令？** 看 [CHEATSHEET.md](CHEATSHEET.md) — 一页纸速查表
-- **遇问题？** 查 [FAQ.md](FAQ.md) — 22 个常见问题
+该命令会下载 npm `latest`，只更新已有的 skill 安装并完成校验，不会修改记忆数据。
 
-## 常见问题 · FAQ
+```bash
+# Preview or update one platform · 预览或指定平台
+npx memory-store-update --dry-run
+npx memory-store-update --agent codex
+```
 
-遇到问题先查 [FAQ.md](FAQ.md) — 覆盖 22 个常见问题，从基础概念到排障安装。
+| Capability | 说明 / Description |
+|---|---|
+| Two scopes | 全局 `global` + 项目 `workspace` |
+| Visibility labels | `private` / `shared` / `global` cooperative filtering |
+| Eight memory types | fact, decision, preference, workflow, debug_solution, state, event, relation |
+| Retrieval | keyword, tags, type, freshness, importance, and Chinese n-grams |
+| Lifecycle | TTL, priority-aware decay, archive, restore, merge |
+| Runtime | Node.js 18+, no third-party runtime dependencies, no daemon |
 
----
+> `private` is not encryption or an operating-system security boundary. Do not store credentials, tokens, keys, or raw personal data.
 
-<sub>Memory Store Skill · 面向 AI Agent 工作场景的记忆管理 · Memory management for AI agent workflows</sub>
+## Start here
+
+- [中文：完整说明与 5 分钟上手](README.zh.md)
+- [English: full guide and quick start](README.en.md)
+- [CLI 速查表](CHEATSHEET.md)
+- [常见问题](FAQ.md)
+- [Agent 指令](SKILL.md)
+
+需要从源码安装或参与开发时：
+
+```bash
+git clone https://github.com/Revolves/memory-store-skill.git
+cd memory-store-skill
+node scripts/install.js --all
+```
+
+## License
+
+MIT.

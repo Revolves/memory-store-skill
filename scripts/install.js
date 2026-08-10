@@ -10,6 +10,10 @@
  *   node scripts/install.js                  Interactive: choose mode → select targets → install
  *   node scripts/install.js --all            Non-interactive: install to ALL detected agents
  *   node scripts/install.js --agent claude   Non-interactive: install to specific agent(s)
+ *   node scripts/install.js --target <path>  Non-interactive: install to a custom directory
+ *   node scripts/install.js --update          Update all detected existing installations
+ *   node scripts/install.js --check           Verify installed artifacts without writing
+ *   node scripts/install.js --dry-run         Preview installation without writing
  *   node scripts/install.js --list           Just list detected agents
  *   node scripts/install.js --help           Show help
  *
@@ -20,7 +24,15 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
 const readline = require("readline");
+
+function configuredRoot(envName, fallbackDir) {
+  const configured = process.env[envName];
+  return configured && configured.trim()
+    ? path.resolve(configured.trim())
+    : path.join(os.homedir(), fallbackDir);
+}
 
 // =============================================================================
 // Agent platform definitions
@@ -30,18 +42,24 @@ const AGENT_PLATFORMS = [
   {
     name: "claude",
     label: "Claude Code",
-    skillDir: path.join(os.homedir(), ".claude", "skills", "memory-store"),
-    detect: () =>
-      process.env.CLAUDE_CONFIG_DIR ||
-      fs.existsSync(path.join(os.homedir(), ".claude")),
+    configDir: configuredRoot("CLAUDE_CONFIG_DIR", ".claude"),
+    get skillDir() {
+      return path.join(this.configDir, "skills", "memory-store");
+    },
+    detect() {
+      return Boolean(process.env.CLAUDE_CONFIG_DIR?.trim()) || fs.existsSync(this.configDir);
+    },
   },
   {
     name: "codex",
     label: "Codex",
-    skillDir: path.join(os.homedir(), ".agents", "skills", "memory-store"),
-    detect: () =>
-      process.env.CODEX_CONFIG_DIR ||
-      fs.existsSync(path.join(os.homedir(), ".agents")),
+    configDir: configuredRoot("CODEX_CONFIG_DIR", ".agents"),
+    get skillDir() {
+      return path.join(this.configDir, "skills", "memory-store");
+    },
+    detect() {
+      return Boolean(process.env.CODEX_CONFIG_DIR?.trim()) || fs.existsSync(this.configDir);
+    },
   },
   {
     name: "gemini",
@@ -94,6 +112,98 @@ const AGENT_PLATFORMS = [
 
 const SKILL_DIR = path.resolve(__dirname, "..");
 
+const INSTALL_GROUPS = [
+  { source: "SKILL.md", label: "SKILL.md" },
+  { source: "scripts", label: "scripts/", filter: (name) => name.endsWith(".js") },
+  { source: "references", label: "references/" },
+  { source: "examples", label: "examples/" },
+  { source: "agents", label: "agents/" },
+];
+
+function getPackageVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(SKILL_DIR, "package.json"), "utf8")).version;
+  } catch {
+    return "unknown";
+  }
+}
+
+function listFiles(root, filter = () => true, relativeDir = "") {
+  if (!fs.existsSync(root)) return [];
+  const files = [];
+  for (const name of fs.readdirSync(root)) {
+    if (!filter(name)) continue;
+    const absolute = path.join(root, name);
+    const relative = path.join(relativeDir, name);
+    if (fs.statSync(absolute).isDirectory()) {
+      files.push(...listFiles(absolute, filter, relative));
+    } else {
+      files.push(relative);
+    }
+  }
+  return files;
+}
+
+function installArtifacts() {
+  const artifacts = [];
+  for (const group of INSTALL_GROUPS) {
+    const source = path.join(SKILL_DIR, group.source);
+    if (!fs.existsSync(source)) continue;
+    if (fs.statSync(source).isDirectory()) {
+      for (const relative of listFiles(source, group.filter)) {
+        artifacts.push(path.join(group.source, relative));
+      }
+    } else {
+      artifacts.push(group.source);
+    }
+  }
+  return artifacts.sort();
+}
+
+function fileHash(file) {
+  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function verifyTarget(targetDir) {
+  const dst = path.resolve(targetDir);
+  const missing = [];
+  const mismatched = [];
+  const artifacts = installArtifacts();
+
+  for (const relative of artifacts) {
+    const source = path.join(SKILL_DIR, relative);
+    const installed = path.join(dst, relative);
+    if (!fs.existsSync(installed)) {
+      missing.push(relative);
+    } else if (fileHash(source) !== fileHash(installed)) {
+      mismatched.push(relative);
+    }
+  }
+
+  return {
+    ok: missing.length === 0 && mismatched.length === 0,
+    target: dst,
+    version: getPackageVersion(),
+    checked: artifacts.length,
+    missing,
+    mismatched,
+  };
+}
+
+function printVerification(report) {
+  if (report.ok) {
+    console.log(`    ✅ Verified ${report.checked} artifact(s), source v${report.version}`);
+    return;
+  }
+  console.error(`    ❌ Installation is stale or incomplete: ${report.target}`);
+  if (report.missing.length > 0) {
+    console.error(`       Missing: ${report.missing.join(", ")}`);
+  }
+  if (report.mismatched.length > 0) {
+    console.error(`       Changed: ${report.mismatched.join(", ")}`);
+  }
+}
+
 function copyDir(src, dst, filter = () => true) {
   fs.mkdirSync(dst, { recursive: true });
   let count = 0;
@@ -116,7 +226,7 @@ function detectAgents() {
   for (const agent of AGENT_PLATFORMS) {
     try {
       if (agent.detect()) {
-        found.push({ ...agent, installed: fs.existsSync(agent.skillDir) });
+        found.push({ ...agent, installed: isInstalledTarget(agent.skillDir) });
       }
     } catch {
       // skip if detection throws
@@ -125,47 +235,63 @@ function detectAgents() {
   return found;
 }
 
-function installTo(targetDir) {
+function isInstalledTarget(targetDir) {
   const dst = path.resolve(targetDir);
-  console.log(`  📁 Installing to: ${dst}`);
+  return fs.existsSync(path.join(dst, "SKILL.md")) &&
+    fs.existsSync(path.join(dst, "scripts", "memory_cli.js"));
+}
 
-  // Create directory structure
+function installTo(targetDir, { dryRun = false, action = "install" } = {}) {
+  const dst = path.resolve(targetDir);
+  const artifacts = installArtifacts();
+  const actionLabel = action === "update" ? "update" : "install";
+  console.log(`  📁 ${dryRun ? `Would ${actionLabel}` : `${actionLabel === "update" ? "Updating" : "Installing"}`} ${actionLabel === "update" ? "in" : "to"}: ${dst}`);
+
+  if (dryRun) {
+    console.log(`    🔎 Would copy and verify ${artifacts.length} artifact(s), source v${getPackageVersion()}`);
+    return { ok: true, dryRun: true, target: dst, checked: artifacts.length };
+  }
+
   fs.mkdirSync(dst, { recursive: true });
-  fs.mkdirSync(path.join(dst, "scripts"), { recursive: true });
-  fs.mkdirSync(path.join(dst, "references"), { recursive: true });
-  fs.mkdirSync(path.join(dst, "examples"), { recursive: true });
-
-  // Copy SKILL.md
-  const skillSrc = path.join(SKILL_DIR, "SKILL.md");
-  if (fs.existsSync(skillSrc)) {
-    fs.copyFileSync(skillSrc, path.join(dst, "SKILL.md"));
-    console.log(`    ✅ SKILL.md`);
+  for (const group of INSTALL_GROUPS) {
+    const source = path.join(SKILL_DIR, group.source);
+    if (!fs.existsSync(source)) continue;
+    const target = path.join(dst, group.source);
+    let count;
+    if (fs.statSync(source).isDirectory()) {
+      count = copyDir(source, target, group.filter);
+    } else {
+      fs.copyFileSync(source, target);
+      count = 1;
+    }
+    console.log(`    ✅ ${group.label}${count > 1 ? ` (${count} files)` : ""}`);
   }
 
-  // Copy scripts/ (only .js files)
-  const scriptSrc = path.join(SKILL_DIR, "scripts");
-  if (fs.existsSync(scriptSrc)) {
-    const n = copyDir(scriptSrc, path.join(dst, "scripts"), (name) =>
-      name.endsWith(".js")
-    );
-    console.log(`    ✅ scripts/ (${n} files)`);
+  const report = verifyTarget(dst);
+  printVerification(report);
+  if (!report.ok) {
+    throw new Error("post-install verification failed");
+  }
+  return report;
+}
+
+function updateTo(targetDir, { dryRun = false } = {}) {
+  const dst = path.resolve(targetDir);
+  if (!isInstalledTarget(dst)) {
+    throw new Error(`no existing Memory Store skill installation at ${dst}`);
   }
 
-  // Copy references/
-  const refSrc = path.join(SKILL_DIR, "references");
-  if (fs.existsSync(refSrc)) {
-    const n = copyDir(refSrc, path.join(dst, "references"));
-    console.log(`    ✅ references/ (${n} files)`);
+  const current = verifyTarget(dst);
+  if (current.ok) {
+    console.log(`  ✅ Already current: ${dst} (v${current.version})`);
+    return { ...current, changed: false, needsUpdate: false, dryRun };
   }
 
-  // Copy examples/
-  const exSrc = path.join(SKILL_DIR, "examples");
-  if (fs.existsSync(exSrc)) {
-    const n = copyDir(exSrc, path.join(dst, "examples"));
-    console.log(`    ✅ examples/ (${n} files)`);
-  }
-
-  return true;
+  return {
+    ...installTo(dst, { dryRun, action: "update" }),
+    changed: !dryRun,
+    needsUpdate: true,
+  };
 }
 
 function initUniversalGlobalStore() {
@@ -213,18 +339,52 @@ function printBanner() {
 
 async function main() {
   const args = process.argv.slice(2);
+  const booleanOptions = new Set(["--list", "--all", "--update", "--check", "--dry-run", "--help", "-h"]);
+  const valuedOptions = new Set(["--agent", "--target"]);
+  for (let i = 0; i < args.length; i++) {
+    const option = args[i];
+    if (booleanOptions.has(option)) continue;
+    if (valuedOptions.has(option)) {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new Error(`Missing value for ${option}.`);
+      }
+      i++;
+      continue;
+    }
+    throw new Error(`Unknown option '${option}'. Run with --help for usage.`);
+  }
   const flags = {
     list: args.includes("--list"),
     all: args.includes("--all"),
+    update: args.includes("--update"),
+    check: args.includes("--check"),
+    dryRun: args.includes("--dry-run"),
     help: args.includes("--help") || args.includes("-h"),
     agents: [],
+    target: null,
   };
 
-  // Parse --agent values
+  // Parse valued options.
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--agent" && i + 1 < args.length && !args[i + 1].startsWith("--")) {
       flags.agents.push(...args[i + 1].split(",").map((a) => a.trim().toLowerCase()));
+      i++;
+    } else if (args[i] === "--target" && i + 1 < args.length && !args[i + 1].startsWith("--")) {
+      flags.target = args[i + 1];
+      i++;
     }
+  }
+
+  const selectorCount = Number(flags.all) + Number(flags.agents.length > 0) + Number(Boolean(flags.target));
+  if (selectorCount > 1) {
+    throw new Error("--all, --agent, and --target are mutually exclusive selectors.");
+  }
+  if (flags.check && (flags.dryRun || flags.update)) {
+    throw new Error("--check cannot be combined with --dry-run or --update.");
+  }
+  if (flags.list && (selectorCount > 0 || flags.update || flags.check || flags.dryRun)) {
+    throw new Error("--list cannot be combined with install, update, check, or dry-run options.");
   }
 
   if (flags.help) {
@@ -235,8 +395,24 @@ Usage:
   node scripts/install.js                    Interactive: choose mode → select targets → install
   node scripts/install.js --all              Install to ALL detected agents (non-interactive)
   node scripts/install.js --agent claude     Install to specific agent(s) (non-interactive)
+  node scripts/install.js --target <path>    Install to a custom directory (non-interactive)
+  node scripts/install.js --update [selector]
+                                            Update existing installation(s) from this package
+  node scripts/install.js --check [selector] Verify installed files against this source
+  node scripts/install.js --dry-run [selector]
+                                            Preview without creating or changing files
   node scripts/install.js --list             List detected agents only
   node scripts/install.js --help             Show this help
+
+Selectors:
+  --all, --agent <name[,name]>, or --target <path>
+
+Update from npm:
+  npx memory-store-skill@latest --update
+
+Configuration roots:
+  CLAUDE_CONFIG_DIR and CODEX_CONFIG_DIR override the corresponding default
+  configuration roots; skills install below <config-root>/skills/memory-store.
 
 Detected platforms:
   claude      — Claude Code
@@ -255,6 +431,83 @@ Detected platforms:
   // --- Detect agents ---
   const found = detectAgents();
 
+  const requested = [];
+  for (const name of flags.agents) {
+    const agent = AGENT_PLATFORMS.find((candidate) => candidate.name === name);
+    if (agent) {
+      requested.push({ agent, dir: agent.skillDir });
+    } else {
+      console.error(`  ❌ Unknown agent "${name}". Supported: ${AGENT_PLATFORMS.map((a) => a.name).join(", ")}`);
+    }
+  }
+
+  function selectedTargets() {
+    if (flags.target) {
+      const dir = path.resolve(flags.target);
+      return [{ agent: { name: "manual", label: "Manual" }, dir }];
+    }
+    if (flags.agents.length > 0) return requested;
+    return found.map((agent) => ({ agent, dir: agent.skillDir }));
+  }
+
+  if (flags.check) {
+    printBanner();
+    const targets = selectedTargets();
+    if (targets.length === 0) {
+      console.error("No installation targets selected or detected.");
+      process.exitCode = 1;
+      return;
+    }
+    let validCount = 0;
+    for (const { agent, dir } of targets) {
+      console.log(`  🔎 Checking ${agent.label}: ${path.resolve(dir)}`);
+      const report = verifyTarget(dir);
+      printVerification(report);
+      if (report.ok) validCount++;
+    }
+    console.log(`\n${validCount === targets.length ? "✅" : "❌"} Verification complete (${validCount}/${targets.length}).`);
+    process.exitCode = validCount === targets.length ? 0 : 1;
+    return;
+  }
+
+  if (flags.update) {
+    printBanner();
+    const selected = selectedTargets();
+    const targets = selected.filter(({ dir }) => isInstalledTarget(dir));
+    const missing = selected.filter(({ dir }) => !isInstalledTarget(dir));
+
+    for (const { agent, dir } of missing) {
+      console.error(`  ❌ ${agent.label}: no existing installation at ${path.resolve(dir)}`);
+    }
+    if (targets.length === 0) {
+      console.error("No existing Memory Store skill installations selected or detected.");
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`${flags.dryRun ? "🔎 Previewing updates for" : "⬆️  Updating"} ${targets.length} existing target(s) from package v${getPackageVersion()}...\n`);
+    let successCount = 0;
+    let changedCount = 0;
+    for (const { agent, dir } of targets) {
+      try {
+        const report = updateTo(dir, { dryRun: flags.dryRun });
+        successCount++;
+        if (flags.dryRun ? report.needsUpdate : report.changed) changedCount++;
+      } catch (e) {
+        console.error(`    ❌ ${agent.label}: ${e.message}`);
+      }
+    }
+
+    const expectedCount = targets.length + missing.length;
+    const complete = successCount === expectedCount;
+    console.log(`\n${complete ? "✅" : "❌"} ${flags.dryRun ? "Update preview" : "Update"} complete (${successCount}/${expectedCount}); ${changedCount} target(s) ${flags.dryRun ? "need update" : "changed"}.`);
+    if (!flags.dryRun && successCount > 0) {
+      console.log("   Restart your agent sessions for the updated skill to take effect.");
+    }
+    process.exitCode = complete ? 0 : 1;
+    return;
+  }
+
   // --- Non-interactive modes ---
   if (flags.list) {
     printBanner();
@@ -268,58 +521,53 @@ Detected platforms:
         console.log(`    ${agent.skillDir}`);
       }
     }
-    process.exit(0);
+    return;
   }
 
-  if (flags.all) {
+  if (flags.all || flags.target) {
     // Non-interactive: install to all detected
     printBanner();
-    if (found.length === 0) {
-      console.log("No AI agent platforms detected. Nothing to install.");
-      process.exit(1);
+    const targets = selectedTargets();
+    if (targets.length === 0) {
+      console.error("No AI agent platforms detected. Nothing to install.");
+      process.exitCode = 1;
+      return;
     }
-    console.log(`🔍 Detected ${found.length} agent(s). Installing to ALL...\n`);
+    console.log(`${flags.dryRun ? "🔎 Previewing" : "🔍 Installing to"} ${targets.length} target(s)...\n`);
     let successCount = 0;
-    for (const agent of found) {
+    for (const { agent, dir } of targets) {
       try {
-        installTo(agent.skillDir);
+        installTo(dir, { dryRun: flags.dryRun });
         successCount++;
       } catch (e) {
         console.error(`    ❌ ${agent.label}: ${e.message}`);
       }
     }
-    initUniversalGlobalStore();
-    console.log(`\n✅ Installation complete (${successCount}/${found.length}).`);
-    if (successCount > 0) console.log("   Restart your agent sessions for the skill to take effect.");
-    process.exit(0);
+    if (!flags.dryRun && successCount > 0) initUniversalGlobalStore();
+    console.log(`\n${successCount === targets.length ? "✅" : "❌"} ${flags.dryRun ? "Preview" : "Installation"} complete (${successCount}/${targets.length}).`);
+    if (!flags.dryRun && successCount > 0) console.log("   Restart your agent sessions for the skill to take effect.");
+    process.exitCode = successCount === targets.length ? 0 : 1;
+    return;
   }
 
   if (flags.agents.length > 0) {
     // Non-interactive: install to specified agents
     printBanner();
-    if (found.length === 0) {
-      console.log("No AI agent platforms detected. Nothing to install.");
-      process.exit(1);
-    }
-    console.log(`🔍 Installing to specified agent(s): ${flags.agents.join(", ")}\n`);
+    console.log(`${flags.dryRun ? "🔎 Previewing" : "🔍 Installing to"} specified agent(s): ${flags.agents.join(", ")}\n`);
     let successCount = 0;
-    for (const name of flags.agents) {
-      const agent = found.find((a) => a.name === name);
-      if (agent) {
-        try {
-          installTo(agent.skillDir);
-          successCount++;
-        } catch (e) {
-          console.error(`    ❌ ${agent.label}: ${e.message}`);
-        }
-      } else {
-        console.warn(`  ⚠️  Agent "${name}" not found. Available: ${found.map((a) => a.name).join(", ")}`);
+    for (const { agent, dir } of requested) {
+      try {
+        installTo(dir, { dryRun: flags.dryRun });
+        successCount++;
+      } catch (e) {
+        console.error(`    ❌ ${agent.label}: ${e.message}`);
       }
     }
-    initUniversalGlobalStore();
-    console.log(`\n✅ Installation complete (${successCount}/${flags.agents.length}).`);
-    if (successCount > 0) console.log("   Restart your agent sessions for the skill to take effect.");
-    process.exit(0);
+    if (!flags.dryRun && successCount > 0) initUniversalGlobalStore();
+    console.log(`\n${successCount === flags.agents.length ? "✅" : "❌"} ${flags.dryRun ? "Preview" : "Installation"} complete (${successCount}/${flags.agents.length}).`);
+    if (!flags.dryRun && successCount > 0) console.log("   Restart your agent sessions for the skill to take effect.");
+    process.exitCode = successCount === flags.agents.length ? 0 : 1;
+    return;
   }
 
   // =========================================================================
@@ -349,16 +597,9 @@ Detected platforms:
     const resolvedPath = path.resolve(manualPath);
     console.log(`\n  Path: ${resolvedPath}`);
 
-    // Check if path exists or create
+    // Installation creates the directory only after confirmation.
     if (!fs.existsSync(resolvedPath)) {
-      const create = await ask("  Path does not exist. Create? [y/N] (default: N): ");
-      if (create.toLowerCase() === "y") {
-        fs.mkdirSync(resolvedPath, { recursive: true });
-        console.log("  ✅ Directory created.");
-      } else {
-        console.log("❌ Aborting.");
-        process.exit(1);
-      }
+      console.log(`  ${flags.dryRun ? "Would create" : "Will create"} after confirmation.`);
     }
 
     targets.push({ agent: { name: "manual", label: "Manual", skillDir: resolvedPath }, dir: resolvedPath });
@@ -375,9 +616,6 @@ Detected platforms:
         process.exit(1);
       }
       const resolvedPath = path.resolve(manualPath);
-      if (!fs.existsSync(resolvedPath)) {
-        fs.mkdirSync(resolvedPath, { recursive: true });
-      }
       targets.push({ agent: { name: "manual", label: "Manual", skillDir: resolvedPath }, dir: resolvedPath });
     } else {
       console.log(`  Found ${found.length} AI agent platform(s):\n`);
@@ -401,9 +639,6 @@ Detected platforms:
         const manualPath = await ask("Target path: ");
         if (manualPath) {
           const resolvedPath = path.resolve(manualPath);
-          if (!fs.existsSync(resolvedPath)) {
-            fs.mkdirSync(resolvedPath, { recursive: true });
-          }
           targets.push({ agent: { name: "manual", label: "Manual", skillDir: resolvedPath }, dir: resolvedPath });
         }
       } else {
@@ -426,8 +661,8 @@ Detected platforms:
 
   // --- Step 2: Confirm targets ---
   console.log("\n─── Target Summary ───");
-  for (const { agent } of targets) {
-    console.log(`  📦 ${agent.label.padEnd(22)} → ${agent.dir}`);
+  for (const { agent, dir } of targets) {
+    console.log(`  📦 ${agent.label.padEnd(22)} → ${dir}`);
   }
 
   // --- Step 3: Confirm ---
@@ -439,12 +674,12 @@ Detected platforms:
     process.exit(0);
   }
 
-  console.log("\n─── Installing ───\n");
+  console.log(`\n─── ${flags.dryRun ? "Preview" : "Installing"} ───\n`);
 
   let successCount = 0;
   for (const { agent, dir } of targets) {
     try {
-      const ok = installTo(dir);
+      const ok = installTo(dir, { dryRun: flags.dryRun });
       if (ok) {
         successCount++;
       }
@@ -454,11 +689,12 @@ Detected platforms:
   }
 
   // --- Summary ---
-  initUniversalGlobalStore();
-  console.log(`\n✅ Installation complete (${successCount}/${targets.length} targets).`);
-  if (successCount > 0) {
+  if (!flags.dryRun && successCount > 0) initUniversalGlobalStore();
+  console.log(`\n${successCount === targets.length ? "✅" : "❌"} ${flags.dryRun ? "Preview" : "Installation"} complete (${successCount}/${targets.length} targets).`);
+  if (!flags.dryRun && successCount > 0) {
     console.log("   Restart your agent sessions for the skill to take effect.");
   }
+  process.exitCode = successCount === targets.length ? 0 : 1;
 }
 
 main().catch((e) => {

@@ -26,12 +26,13 @@ const VISIBILITIES = ["private", "shared", "global"];
 const PRIORITIES = ["P1", "P2", "P3"];
 const SCHEMA_VERSION = 2;
 const DEFAULT_VISIBILITY = { global: "global", project: "shared", workspace: "shared" };
-const PRIORITY_DECAY = { P1: 0.3, P2: 0.5, P3: 0.8 };
+// Weekly retention factor: larger values decay more slowly.
+const PRIORITY_DECAY = { P1: 0.8, P2: 0.5, P3: 0.3 };
 const PROJECT_STORE_RELATIVE = path.join(".agents", "memory-store");
 
 // Authoritative fallback version. MUST match package.json "version".
 // Used when package.json is not present (e.g. deployed skill dir without it).
-const VERSION = "1.0.2";
+const VERSION = "1.0.4";
 
 // Legacy platform-specific global stores (pre-v2.8). Used only by `migrate`
 // to discover and consolidate memories into the universal store.
@@ -70,6 +71,63 @@ function generateId() {
 
 function normalizeScope(scope) {
   return scope === "project" ? "workspace" : scope;
+}
+
+function fail(message) {
+  process.stderr.write(`Error: ${message}\n`);
+  process.exit(1);
+}
+
+function requireNonEmpty(value, name) {
+  if (typeof value !== "string" || !value.trim()) fail(`--${name} is required and must not be empty.`);
+  return value.trim();
+}
+
+function validateScope(scope, { allowAll = false } = {}) {
+  const normalized = normalizeScope(scope || "global");
+  const allowed = allowAll ? ["all", "global", "workspace"] : ["global", "workspace"];
+  if (!allowed.includes(normalized)) {
+    fail(`Invalid scope '${scope}'. Must be one of: ${allowed.join(", ")}.`);
+  }
+  return normalized;
+}
+
+function validateEnum(value, values, name) {
+  if (value !== undefined && !values.includes(value)) {
+    fail(`Invalid ${name} '${value}'. Must be one of: ${values.join(", ")}.`);
+  }
+  return value;
+}
+
+function validateNumberInRange(value, name, min = 0, max = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min || n > max) {
+    fail(`--${name} must be a number between ${min} and ${max}.`);
+  }
+  return n;
+}
+
+function validatePositiveInteger(value, name) {
+  const raw = typeof value === "string" ? value.trim() : value;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) fail(`--${name} must be a positive integer.`);
+  return n;
+}
+
+function validateVisibilityFilter(value) {
+  if (!value) return new Set();
+  const values = value.split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+  const invalid = values.filter((v) => !VISIBILITIES.includes(v));
+  if (invalid.length) fail(`Invalid visibility value(s): ${invalid.join(", ")}. Must be one of: ${VISIBILITIES.join(", ")}.`);
+  return new Set(values);
+}
+
+function agentIdentity(a) {
+  return a.as_agent || process.env.MEMORY_AGENT_ID || null;
+}
+
+function canAccessMemory(mem, asAgent) {
+  return mem.visibility !== "private" || Boolean(asAgent && mem.owner_agent === asAgent);
 }
 
 function inferPriority(imp) {
@@ -171,16 +229,39 @@ function loadMemories(storePath) {
   const memFile = path.join(storePath, "memories.json");
   if (!fs.existsSync(memFile)) return [];
   try {
-    return JSON.parse(fs.readFileSync(memFile, "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(memFile, "utf8"));
+    if (!Array.isArray(parsed)) throw new Error("top-level value must be a JSON array");
+    return parsed;
   } catch (e) {
-    process.stderr.write(`Error reading memories from ${memFile}: ${e.message}\n`);
-    return [];
+    fail(`Cannot read memory store '${memFile}': ${e.message}. The file was not modified.`);
   }
 }
 
-/** Atomic write: temp file + rename (crash-safe, multi-agent safe). */
+function loadArchiveFiles(storePath, storeScope) {
+  const archiveDir = path.join(storePath, "archive");
+  if (!fs.existsSync(archiveDir)) return [];
+  const records = [];
+  for (const name of fs.readdirSync(archiveDir).filter((f) => f.startsWith("archived_") && f.endsWith(".json")).sort()) {
+    const file = path.join(archiveDir, name);
+    let memories;
+    try {
+      memories = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (!Array.isArray(memories)) throw new Error("top-level value must be a JSON array");
+    } catch (e) {
+      fail(`Cannot read archive '${file}': ${e.message}. The file was not modified.`);
+    }
+    for (let i = 0; i < memories.length; i++) {
+      const memory = defaults(memories[i], storeScope);
+      memory.status = "archived";
+      records.push({ memory, file, index: i, memories });
+    }
+  }
+  return records;
+}
+
+/** Crash-safe atomic replacement. This is not a multi-process transaction. */
 function atomicWriteJson(file, data) {
-  const tmp = `${file}.tmp`;
+  const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
   fs.renameSync(tmp, file);
 }
@@ -371,11 +452,8 @@ function computeDecay(mem) {
   let days = 0;
   const last = mem.last_accessed || mem.created_at;
   if (last) {
-    try {
-      days = Math.max(0, (Date.now() - new Date(last).getTime()) / 86400000);
-    } catch (e) {
-      days = 0;
-    }
+    const lastTime = new Date(last).getTime();
+    days = Number.isFinite(lastTime) ? Math.max(0, (Date.now() - lastTime) / 86400000) : 0;
   }
   const stability = 1 + 0.2 * Math.log10(acc + 1);
   const score = imp * Math.pow(pDecay, days / 7) * stability;
@@ -387,7 +465,8 @@ function computeDecay(mem) {
 // ==============================================================================
 
 function cmdInit(a) {
-  const storePath = resolveStorePath(a.store_path, a.scope || "global");
+  const scope = validateScope(a.scope || "global");
+  const storePath = resolveStorePath(a.store_path, scope);
   ensureStoreDir(storePath);
   process.stdout.write(`Initialized memory store at: ${storePath}\n`);
 }
@@ -397,29 +476,35 @@ function cmdStore(a) {
     process.stderr.write(`Error: Invalid memory type '${a.type}'. Must be one of: ${VALID_TYPES.join(", ")}\n`);
     process.exit(1);
   }
-  const storePath = resolveStorePath(a.store_path, a.scope || "global");
+  const title = requireNonEmpty(a.title, "title");
+  const summary = requireNonEmpty(a.summary, "summary");
+  const scopeName = validateScope(a.scope || "global");
+  const visibility = a.visibility || DEFAULT_VISIBILITY[scopeName] || "shared";
+  validateEnum(visibility, VISIBILITIES, "visibility");
+  if (a.priority !== undefined) validateEnum(a.priority, PRIORITIES, "priority");
+  const importance = validateNumberInRange(a.importance ?? 0.5, "importance");
+  const ttlDays = a.ttl_days !== undefined ? validatePositiveInteger(a.ttl_days, "ttl-days") : null;
+  const ownerAgent = a.agent_id || process.env.MEMORY_AGENT_ID || null;
+  if (visibility === "private" && !ownerAgent) {
+    fail("--agent-id or MEMORY_AGENT_ID is required when storing a private memory.");
+  }
+  const storePath = resolveStorePath(a.store_path, scopeName);
   const memories = loadMemories(storePath);
   const tags = a.tags ? a.tags.split(",").map((t) => t.trim().toLowerCase()) : [];
   const relatedFiles = a.related_files ? a.related_files.split(",").map((f) => f.trim()) : [];
-  const importance = parseFloat(a.importance ?? 0.5);
-  const scopeName = normalizeScope(a.scope || "global");
-  const visibility = a.visibility || DEFAULT_VISIBILITY[scopeName] || "shared";
-  let expiresAt = null;
-  if (a.ttl_days) {
-    expiresAt = new Date(Date.now() + parseInt(a.ttl_days, 10) * 86400000).toISOString();
-  }
+  const expiresAt = ttlDays === null ? null : new Date(Date.now() + ttlDays * 86400000).toISOString();
   const mem = {
     id: generateId(),
     schema_version: SCHEMA_VERSION,
     scope: scopeName,
     visibility: visibility,
-    owner_agent: a.agent_id || process.env.MEMORY_AGENT_ID || null,
+    owner_agent: ownerAgent,
     created_at: nowISO(),
     updated_at: nowISO(),
     source_conversation_id: a.source_conv_id || null,
     type: a.type,
-    title: a.title,
-    summary: a.summary,
+    title,
+    summary,
     details: a.details || null,
     tags: tags,
     importance: importance,
@@ -427,7 +512,7 @@ function cmdStore(a) {
     access_count: 0,
     last_accessed: null,
     related_files: relatedFiles,
-    ttl_days: a.ttl_days ? parseInt(a.ttl_days, 10) : null,
+    ttl_days: ttlDays,
     expires_at: expiresAt,
     decay_score: importance,
     status: "active",
@@ -442,13 +527,15 @@ function cmdStore(a) {
 }
 
 function cmdSearch(a) {
+  const scope = validateScope(a.scope || "all", { allowAll: true });
+  const limit = validatePositiveInteger(a.limit ?? 5, "limit");
   const query = a.query || "";
   const filterTags = new Set(a.tags ? a.tags.split(",").map((t) => t.trim().toLowerCase()) : []);
   const filterTypes = parseTypeFilter(a.type);
-  const visibilityFilter = new Set(a.visibility ? a.visibility.split(",").map((v) => v.trim().toLowerCase()) : []);
-  const asAgent = a.as_agent || process.env.MEMORY_AGENT_ID || null;
+  const visibilityFilter = validateVisibilityFilter(a.visibility);
+  const asAgent = agentIdentity(a);
 
-  const targetPaths = resolveTargetPaths(a.store_path, a.scope || "all");
+  const targetPaths = resolveTargetPaths(a.store_path, scope);
   const results = [];
   const seen = new Set();
 
@@ -456,34 +543,66 @@ function cmdSearch(a) {
     for (let m of loadMemories(p)) {
       if (seen.has(m.id)) continue;
       m = defaults(m, scopeName);
-      if (asAgent && m.visibility === "private" && m.owner_agent !== asAgent) continue;
+      if (!canAccessMemory(m, asAgent)) continue;
       if (visibilityFilter.size && !visibilityFilter.has(m.visibility)) continue;
       const score = calcScore(m, query, filterTags, filterTypes);
       if (score > 0) {
         seen.add(m.id);
-        results.push({ ...m, _score: score, _store_scope: scopeName });
+        results.push({ memory: { ...m, _score: score, _store_scope: scopeName }, storePath: p });
       }
     }
   }
-  results.sort((x, y) => (y._score - x._score) || (y.created_at || "").localeCompare(x.created_at || ""));
-  writeOutput(results.slice(0, parseInt(a.limit ?? 5, 10)), a.output);
+  results.sort((x, y) => (y.memory._score - x.memory._score) || (y.memory.created_at || "").localeCompare(x.memory.created_at || ""));
+  const selected = results.slice(0, limit);
+  if (a.touch) {
+    const byStore = new Map();
+    for (const result of selected) {
+      if (!byStore.has(result.storePath)) byStore.set(result.storePath, []);
+      byStore.get(result.storePath).push(result);
+    }
+    for (const [storePath, storeResults] of byStore) {
+      const mems = loadMemories(storePath);
+      for (const result of storeResults) {
+        const idx = mems.findIndex((m) => m.id === result.memory.id);
+        if (idx < 0) continue;
+        mems[idx].access_count = (mems[idx].access_count || 0) + 1;
+        mems[idx].last_accessed = nowISO();
+        result.memory.access_count = mems[idx].access_count;
+        result.memory.last_accessed = mems[idx].last_accessed;
+      }
+      saveMemories(storePath, mems);
+    }
+  }
+  writeOutput(selected.map((r) => r.memory), a.output);
 }
 
 function cmdRecall(a) {
-  const targets = [
-    ["global", resolveStorePath(a.store_path, "global")],
-    ["workspace", resolveStorePath(a.store_path, "project")],
-  ];
+  requireNonEmpty(a.id, "id");
+  const scope = a.scope ? validateScope(a.scope, { allowAll: true }) : (a.store_path ? "global" : "all");
+  const targets = resolveTargetPaths(a.store_path, scope);
+  const asAgent = agentIdentity(a);
   for (const [scopeName, p] of targets) {
     const mems = loadMemories(p);
     const idx = mems.findIndex((m) => m.id === a.id);
     if (idx >= 0) {
       const m = defaults(mems[idx], scopeName);
+      if (!canAccessMemory(m, asAgent)) fail(`Memory with ID '${a.id}' was not found or access was denied.`);
       m.access_count = (m.access_count || 0) + 1;
       m.last_accessed = nowISO();
       mems[idx] = m;
       saveMemories(p, mems);
       writeOutput(m, a.output);
+      return;
+    }
+    const archived = loadArchiveFiles(p, scopeName);
+    const record = archived.find((r) => r.memory.id === a.id);
+    if (record) {
+      if (!canAccessMemory(record.memory, asAgent)) fail(`Memory with ID '${a.id}' was not found or access was denied.`);
+      record.memory.access_count = (record.memory.access_count || 0) + 1;
+      record.memory.last_accessed = nowISO();
+      record.memories[record.index] = record.memory;
+      atomicWriteJson(record.file, record.memories);
+      writeOutput(record.memory, a.output);
       return;
     }
   }
@@ -492,15 +611,27 @@ function cmdRecall(a) {
 }
 
 function cmdList(a) {
-  const targetPaths = resolveTargetPaths(a.store_path, a.scope || "global");
+  const scope = validateScope(a.scope || "global", { allowAll: true });
+  const limit = validatePositiveInteger(a.limit ?? 20, "limit");
+  if (a.status !== undefined && !["active", "archived"].includes(a.status)) fail("--status must be active or archived.");
+  const targetPaths = resolveTargetPaths(a.store_path, scope);
+  const asAgent = agentIdentity(a);
   let mems = [];
   for (const [scopeName, p] of targetPaths) {
-    for (let m of loadMemories(p)) {
-      m = defaults(m, scopeName);
-      m._store_scope = scopeName;
-      mems.push(m);
+    if (a.status !== "archived") {
+      for (let m of loadMemories(p)) {
+        m = defaults(m, scopeName);
+        m._store_scope = scopeName;
+        mems.push(m);
+      }
+    }
+    if (a.status === "archived" || a.include_archived) {
+      for (const record of loadArchiveFiles(p, scopeName)) {
+        mems.push({ ...record.memory, _store_scope: scopeName });
+      }
     }
   }
+  mems = mems.filter((m) => canAccessMemory(m, asAgent));
   if (a.type) {
     const filterTypes = parseTypeFilter(a.type);
     if (filterTypes) mems = mems.filter((m) => filterTypes.has(m.type));
@@ -511,89 +642,107 @@ function cmdList(a) {
   }
   if (a.status) mems = mems.filter((m) => m.status === a.status);
   if (a.visibility) {
-    const vs = new Set(a.visibility.split(",").map((v) => v.trim().toLowerCase()));
+    const vs = validateVisibilityFilter(a.visibility);
     mems = mems.filter((m) => vs.has(m.visibility));
   }
   const sortKey = a.sort_by || "created_at";
   if (sortKey === "importance") mems.sort((x, y) => parseFloat(y.importance || 0) - parseFloat(x.importance || 0));
   else if (sortKey === "access_count") mems.sort((x, y) => (y.access_count || 0) - (x.access_count || 0));
   else mems.sort((x, y) => (y.created_at || "").localeCompare(x.created_at || ""));
-  writeOutput(mems.slice(0, parseInt(a.limit ?? 20, 10)), a.output);
+  writeOutput(mems.slice(0, limit), a.output);
 }
 
 function cmdUpdate(a) {
-  let storePath = resolveStorePath(a.store_path, "global");
-  let mems = loadMemories(storePath);
-  let idx = mems.findIndex((m) => m.id === a.id);
-  if (idx === -1) {
-    storePath = resolveStorePath(a.store_path, "project");
-    mems = loadMemories(storePath);
-    idx = mems.findIndex((m) => m.id === a.id);
-  }
-  if (idx === -1) {
-    process.stderr.write(`Error: Memory ID '${a.id}' not found.\n`);
-    process.exit(1);
-  }
-  const m = mems[idx];
-  if (a.title) m.title = a.title;
-  if (a.summary) m.summary = a.summary;
-  if (a.details) m.details = a.details;
-  if (a.tags) m.tags = a.tags.split(",").map((t) => t.trim().toLowerCase());
-  if (a.importance !== undefined) {
-    m.importance = parseFloat(a.importance);
-    m.decay_score = m.importance;
-  }
-  if (a.visibility) {
-    if (!VISIBILITIES.includes(a.visibility)) {
-      process.stderr.write(`Error: Invalid visibility '${a.visibility}'. Must be one of: ${VISIBILITIES.join(", ")}\n`);
-      process.exit(1);
+  requireNonEmpty(a.id, "id");
+  const scope = a.scope ? validateScope(a.scope, { allowAll: true }) : (a.store_path ? "global" : "all");
+  const asAgent = agentIdentity(a);
+  for (const [scopeName, storePath] of resolveTargetPaths(a.store_path, scope)) {
+    const mems = loadMemories(storePath);
+    const idx = mems.findIndex((m) => m.id === a.id);
+    if (idx < 0) continue;
+    const m = defaults(mems[idx], scopeName);
+    if (!canAccessMemory(m, asAgent)) fail(`Memory ID '${a.id}' was not found or access was denied.`);
+    if (a.title !== undefined) m.title = requireNonEmpty(a.title, "title");
+    if (a.summary !== undefined) m.summary = requireNonEmpty(a.summary, "summary");
+    if (a.details !== undefined) m.details = a.details;
+    if (a.tags !== undefined) m.tags = a.tags.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+    if (a.importance !== undefined) {
+      m.importance = validateNumberInRange(a.importance, "importance");
+      m.decay_score = m.importance;
     }
-    m.visibility = a.visibility;
-  }
-  if (a.priority) {
-    if (!PRIORITIES.includes(a.priority)) {
-      process.stderr.write(`Error: Invalid priority '${a.priority}'. Must be one of: ${PRIORITIES.join(", ")}\n`);
-      process.exit(1);
+    if (a.visibility !== undefined) {
+      validateEnum(a.visibility, VISIBILITIES, "visibility");
+      if (a.visibility === "private" && m.visibility !== "private") {
+        if (!asAgent) fail("--as-agent or MEMORY_AGENT_ID is required when changing a memory to private.");
+        m.owner_agent = asAgent;
+      }
+      m.visibility = a.visibility;
     }
-    m.priority = a.priority;
+    if (a.priority !== undefined) {
+      validateEnum(a.priority, PRIORITIES, "priority");
+      m.priority = a.priority;
+    }
+    if (a.ttl_days !== undefined) {
+      m.ttl_days = validatePositiveInteger(a.ttl_days, "ttl-days");
+      m.expires_at = new Date(Date.now() + m.ttl_days * 86400000).toISOString();
+    }
+    m.updated_at = nowISO();
+    mems[idx] = m;
+    saveMemories(storePath, mems);
+    process.stdout.write(`Updated memory [${a.id}] in ${storePath}\n`);
+    return;
   }
-  m.updated_at = nowISO();
-  mems[idx] = m;
-  saveMemories(storePath, mems);
-  process.stdout.write(`Updated memory [${a.id}] in ${storePath}\n`);
+  fail(`Memory ID '${a.id}' not found.`);
 }
 
 function cmdDelete(a) {
-  const paths = [resolveStorePath(a.store_path, "global"), resolveStorePath(a.store_path, "project")];
-  for (const p of paths) {
+  requireNonEmpty(a.id, "id");
+  const scope = a.scope ? validateScope(a.scope, { allowAll: true }) : (a.store_path ? "global" : "all");
+  const asAgent = agentIdentity(a);
+  for (const [scopeName, p] of resolveTargetPaths(a.store_path, scope)) {
     const mems = loadMemories(p);
-    const kept = mems.filter((m) => m.id !== a.id);
-    if (kept.length < mems.length) {
-      saveMemories(p, kept);
+    const idx = mems.findIndex((m) => m.id === a.id);
+    if (idx >= 0) {
+      const m = defaults(mems[idx], scopeName);
+      if (!canAccessMemory(m, asAgent)) fail(`Memory ID '${a.id}' was not found or access was denied.`);
+      mems.splice(idx, 1);
+      saveMemories(p, mems);
       process.stdout.write(`Deleted memory [${a.id}] from ${p}\n`);
       return;
     }
+    const record = loadArchiveFiles(p, scopeName).find((r) => r.memory.id === a.id);
+    if (record) {
+      if (!canAccessMemory(record.memory, asAgent)) fail(`Memory ID '${a.id}' was not found or access was denied.`);
+      record.memories.splice(record.index, 1);
+      atomicWriteJson(record.file, record.memories);
+      process.stdout.write(`Deleted archived memory [${a.id}] from ${record.file}\n`);
+      return;
+    }
   }
-  process.stderr.write(`Error: Memory ID '${a.id}' not found.\n`);
-  process.exit(1);
+  fail(`Memory ID '${a.id}' not found.`);
 }
 
 function cmdMerge(a) {
-  const ids = a.ids.split(",").map((s) => s.trim());
+  requireNonEmpty(a.ids, "ids");
+  const scopeName = validateScope(a.scope || "global");
+  const ids = [...new Set(a.ids.split(",").map((s) => s.trim()).filter(Boolean))];
   if (ids.length < 2) {
-    process.stderr.write("Error: Specify at least 2 memory IDs to merge.\n");
-    process.exit(1);
+    fail("Specify at least 2 distinct memory IDs to merge.");
   }
-  const storePath = resolveStorePath(a.store_path, a.scope || "global");
+  const storePath = resolveStorePath(a.store_path, scopeName);
   const mems = loadMemories(storePath);
-  const targets = mems.filter((m) => ids.includes(m.id));
+  const targets = mems.filter((m) => ids.includes(m.id)).map((m) => defaults(m, scopeName));
   if (targets.length !== ids.length) {
-    process.stderr.write("Error: Could not find all specified memory IDs in the store.\n");
-    process.exit(1);
+    fail("Could not find all specified memory IDs in the store.");
   }
+  const asAgent = agentIdentity(a);
+  if (targets.some((m) => !canAccessMemory(m, asAgent))) fail("One or more memories were not found or access was denied.");
   const allTags = [...new Set(targets.flatMap((t) => t.tags || []))].sort();
   const maxImp = Math.max(...targets.map((t) => parseFloat(t.importance || 0)));
   const allFiles = [...new Set(targets.flatMap((t) => t.related_files || []))].sort();
+  const visibility = targets.some((m) => m.visibility === "private")
+    ? "private"
+    : targets.some((m) => m.visibility === "shared") ? "shared" : "global";
   const merged = defaults({
     id: generateId(),
     created_at: nowISO(),
@@ -605,11 +754,13 @@ function cmdMerge(a) {
     details: `Merged from original IDs: ${ids.join(", ")}`,
     tags: allTags,
     importance: maxImp,
+    visibility,
+    owner_agent: visibility === "private" ? asAgent : null,
     access_count: targets.reduce((s, t) => s + (t.access_count || 0), 0),
     last_accessed: nowISO(),
     related_files: allFiles,
     ttl_days: null,
-  }, storePath);
+  }, scopeName);
   const remaining = mems.filter((m) => !ids.includes(m.id));
   remaining.push(merged);
   saveMemories(storePath, remaining);
@@ -617,60 +768,105 @@ function cmdMerge(a) {
 }
 
 function cmdArchive(a) {
-  const storePath = resolveStorePath(a.store_path, a.scope || "global");
-  const mems = loadMemories(storePath);
+  const scope = validateScope(a.scope || "global", { allowAll: true });
+  const asAgent = agentIdentity(a);
+  const minDecay = validateNumberInRange(a.min_decay ?? 0.15, "min-decay");
+  const beforeDays = a.before_days !== undefined ? validatePositiveInteger(a.before_days, "before-days") : null;
+  const minImportance = a.min_importance !== undefined
+    ? validateNumberInRange(a.min_importance, "min-importance") : null;
   const now = new Date();
-  const toArchive = [];
-  const toKeep = [];
-  const minDecay = a.min_decay !== undefined ? parseFloat(a.min_decay) : 0.15;
+  const allArchived = [];
 
-  for (let m of mems) {
-    m = defaults(m, a.scope || "global");
-    let reason = null;
-    if (a.apply_decay) m.decay_score = computeDecay(m);
-    const created = new Date(m.created_at);
-    const daysOld = Math.max(0, (now - created) / 86400000);
-    if (m.ttl_days && daysOld >= m.ttl_days) {
-      reason = `TTL expired (${daysOld.toFixed(1)} >= ${m.ttl_days} days)`;
-    } else if (a.before_days && daysOld >= parseFloat(a.before_days) && (m.access_count || 0) < 2) {
-      reason = `Older than ${a.before_days} days and low access count`;
-    } else if (a.min_importance !== undefined && parseFloat(m.importance || 0) < parseFloat(a.min_importance)) {
-      reason = `Importance below threshold (${m.importance} < ${a.min_importance})`;
-    } else if (parseFloat(m.decay_score || 0) < minDecay) {
-      reason = `Decay below threshold (${m.decay_score} < ${minDecay})`;
-    }
-    if (reason) {
-      m._archive_reason = reason;
-      toArchive.push(m);
-    } else {
-      toKeep.push(m);
-    }
-  }
-
-  if (toArchive.length) {
-    saveMemories(storePath, toKeep);
-    const archiveDir = path.join(storePath, "archive");
-    fs.mkdirSync(archiveDir, { recursive: true });
-    const archiveFile = path.join(archiveDir, `archived_${now.toISOString().slice(0, 7).replace("-", "")}.json`);
-    let existing = [];
-    if (fs.existsSync(archiveFile)) {
-      try {
-        existing = JSON.parse(fs.readFileSync(archiveFile, "utf8"));
-      } catch (e) {
-        existing = [];
+  for (const [scopeName, storePath] of resolveTargetPaths(a.store_path, scope)) {
+    const mems = loadMemories(storePath);
+    const toArchive = [];
+    const toKeep = [];
+    for (let m of mems) {
+      m = defaults(m, scopeName);
+      // Bulk maintenance must not mutate another Agent's private records.
+      if (!canAccessMemory(m, asAgent)) {
+        toKeep.push(m);
+        continue;
+      }
+      let reason = null;
+      if (a.apply_decay) m.decay_score = computeDecay(m);
+      const createdTime = new Date(m.created_at).getTime();
+      const daysOld = Number.isFinite(createdTime) ? Math.max(0, (now.getTime() - createdTime) / 86400000) : 0;
+      if (m.ttl_days && daysOld >= m.ttl_days) {
+        reason = `TTL expired (${daysOld.toFixed(1)} >= ${m.ttl_days} days)`;
+      } else if (beforeDays !== null && daysOld >= beforeDays && (m.access_count || 0) < 2) {
+        reason = `Older than ${beforeDays} days and low access count`;
+      } else if (minImportance !== null && parseFloat(m.importance || 0) < minImportance) {
+        reason = `Importance below threshold (${m.importance} < ${minImportance})`;
+      } else if (parseFloat(m.decay_score || 0) < minDecay) {
+        reason = `Decay below threshold (${m.decay_score} < ${minDecay})`;
+      }
+      if (reason) {
+        m.status = "archived";
+        m.archived_at = now.toISOString();
+        m._archive_reason = reason;
+        toArchive.push(m);
+      } else {
+        toKeep.push(m);
       }
     }
-    atomicWriteJson(archiveFile, existing.concat(toArchive));
-    process.stdout.write(`Archived ${toArchive.length} memories to: ${archiveFile}\n`);
+    if (toArchive.length) {
+      const archiveDir = path.join(storePath, "archive");
+      const archiveFile = path.join(archiveDir, `archived_${now.toISOString().slice(0, 7).replace("-", "")}.json`);
+      let existing = [];
+      if (fs.existsSync(archiveFile)) {
+        try {
+          existing = JSON.parse(fs.readFileSync(archiveFile, "utf8"));
+          if (!Array.isArray(existing)) throw new Error("top-level value must be a JSON array");
+        } catch (e) {
+          fail(`Cannot read archive '${archiveFile}': ${e.message}. The file was not modified.`);
+        }
+      }
+      fs.mkdirSync(archiveDir, { recursive: true });
+      // Write the archive first: a crash can leave duplicates, but cannot lose the only copy.
+      atomicWriteJson(archiveFile, existing.concat(toArchive));
+      allArchived.push(...toArchive);
+      process.stdout.write(`Archived ${toArchive.length} memories to: ${archiveFile}\n`);
+    }
+    if (toArchive.length || a.apply_decay) saveMemories(storePath, toKeep);
   }
-  writeOutput(toArchive, a.output);
+  writeOutput(allArchived, a.output);
+}
+
+function cmdRestore(a) {
+  requireNonEmpty(a.id, "id");
+  const scope = a.scope ? validateScope(a.scope, { allowAll: true }) : (a.store_path ? "global" : "all");
+  const asAgent = agentIdentity(a);
+  for (const [scopeName, storePath] of resolveTargetPaths(a.store_path, scope)) {
+    const record = loadArchiveFiles(storePath, scopeName).find((r) => r.memory.id === a.id);
+    if (!record) continue;
+    if (!canAccessMemory(record.memory, asAgent)) fail(`Memory ID '${a.id}' was not found or access was denied.`);
+    const active = loadMemories(storePath);
+    if (active.some((m) => m.id === a.id)) fail(`Cannot restore '${a.id}': an active memory with the same ID already exists.`);
+    const restored = { ...record.memory, status: "active", updated_at: nowISO() };
+    delete restored.archived_at;
+    delete restored._archive_reason;
+    active.push(restored);
+    // Write active first: a crash can leave duplicates, but cannot lose the only copy.
+    saveMemories(storePath, active);
+    record.memories.splice(record.index, 1);
+    atomicWriteJson(record.file, record.memories);
+    writeOutput(restored, a.output);
+    return;
+  }
+  fail(`Archived memory ID '${a.id}' not found.`);
 }
 
 function cmdStats(a) {
-  const targetPaths = resolveTargetPaths(a.store_path, a.scope || "global");
+  const scope = validateScope(a.scope || "global", { allowAll: true });
+  const targetPaths = resolveTargetPaths(a.store_path, scope);
+  const asAgent = agentIdentity(a);
   const mems = [];
   for (const [scopeName, p] of targetPaths) {
-    for (let m of loadMemories(p)) mems.push(defaults(m, scopeName));
+    for (let m of loadMemories(p)) {
+      m = defaults(m, scopeName);
+      if (canAccessMemory(m, asAgent)) mems.push(m);
+    }
   }
   const typeCounts = {};
   const tagCounts = {};
@@ -826,9 +1022,10 @@ function cmdMigrate(a) {
         if (!f.startsWith("archived_") || !f.endsWith(".json")) continue;
         try {
           const arr = JSON.parse(fs.readFileSync(path.join(archiveDir, f), "utf8"));
-          if (Array.isArray(arr)) archived.push(...arr);
+          if (!Array.isArray(arr)) throw new Error("top-level value must be a JSON array");
+          archived.push(...arr);
         } catch (e) {
-          /* ignore corrupted archive */
+          fail(`Cannot read legacy archive '${path.join(archiveDir, f)}': ${e.message}. Migration was stopped.`);
         }
       }
     }
@@ -926,7 +1123,7 @@ function main() {
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
     process.stdout.write(
       "Memory Store CLI (Node.js). Commands:\n" +
-      "  init store search recall list update delete merge archive stats compress migrate version\n" +
+      "  init store search recall list update delete merge archive restore revive stats compress migrate version\n" +
       "Usage: memory-store <command> [--key value ...]\n" +
 "       node scripts/memory_cli.js <command> [--key value ...]\n" +
       "Output: results print as JSON to stdout by default; use --output <file> to write a file.\n" +
@@ -955,6 +1152,8 @@ function main() {
     delete: cmdDelete,
     merge: cmdMerge,
     archive: cmdArchive,
+    restore: cmdRestore,
+    revive: cmdRestore,
     stats: cmdStats,
     compress: cmdCompress,
     migrate: cmdMigrate,
