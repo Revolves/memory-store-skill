@@ -21,7 +21,7 @@ Requires Node.js 18+ · 需要 Node.js 18+
 
 ```bash
 npm i memory-store-skill
-npx memory-store-install --agent codex --memory-profile explicit
+npx memory-store setup --agent codex --mode explicit
 ```
 
 Installing the npm package does not run lifecycle hooks or modify Agent directories. The explicit second command installs the skill for the selected platform. Start a new Agent session afterward.
@@ -31,9 +31,9 @@ npm 包安装不会运行生命周期脚本，也不会修改 Agent 目录。第
 Memory policy can be changed later · 记忆策略可在安装后调整：
 
 ```bash
-npx memory-store config show
-npx memory-store config set --profile balanced --scope global
-npx memory-store config set --profile explicit --scope workspace
+npx memory-store mode
+npx memory-store mode balanced --global
+npx memory-store mode explicit --workspace
 ```
 
 Profiles: `off`, `explicit` (safe default), `balanced`, and `proactive`. Workspace configuration overrides the global profile.
@@ -42,18 +42,18 @@ Profiles: `off`, `explicit` (safe default), `balanced`, and `proactive`. Workspa
 
 ```bash
 # Verify · 验证
-npx memory-store version
+npx memory-store status
 
 # Inspect or select a platform · 查看或指定平台
-npx memory-store-install --list
-npx memory-store-install --agent codex
+npx memory-store setup --list
+npx memory-store setup --agent codex
 ```
 
 ## Update · 更新
 
 ```bash
 npm i memory-store-skill@latest
-npx memory-store-update
+npx memory-store setup --sync
 ```
 
 The first command explicitly upgrades the npm package. The second syncs only existing skill installations from that local package, verifies the result, and leaves memory data unchanged. The updater does not download or execute remote code.
@@ -62,8 +62,8 @@ The first command explicitly upgrades the npm package. The second syncs only exi
 
 ```bash
 # Preview or update one platform · 预览或指定平台
-npx memory-store-update --dry-run
-npx memory-store-update --agent codex
+npx memory-store setup --sync --dry-run
+npx memory-store setup --sync --agent codex
 ```
 
 | Capability | 说明 / Description |
@@ -74,6 +74,21 @@ npx memory-store-update --agent codex
 | Retrieval | keyword, tags, type, freshness, importance, and Chinese n-grams |
 | Lifecycle | TTL, priority-aware decay, archive, restore, merge |
 | Runtime | Node.js 18+, no third-party runtime dependencies, no daemon |
+
+## One-command terminal · 单命令终端
+
+Run `npx memory-store` in an interactive terminal to open a numbered menu for setup, search, adding memories, profile changes, status, and maintenance preview. With no TTY, the same command prints compact help and exits without waiting.
+
+在交互终端运行 `npx memory-store` 即可打开数字菜单，完成安装、搜索、添加记忆、档位设置、状态查看和维护预览。非交互环境不会等待输入，而是输出精简帮助后退出。
+
+Automation and Agents can use the short commands directly:
+
+```bash
+npx memory-store remember decision "数据库选型" "使用 SQLite，适合本地单用户部署" --workspace
+npx memory-store recall "数据库选型" --json
+npx memory-store mode balanced --global
+npx memory-store status --json
+```
 
 > `private` is not encryption or an operating-system security boundary. Do not store credentials, tokens, keys, or raw personal data.
 

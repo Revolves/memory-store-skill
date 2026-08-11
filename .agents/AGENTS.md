@@ -2,11 +2,11 @@
 
 ## Configured Memory Store Integration
 
-Before any memory access, run `memory-store config show --scope effective --stdout`. The safe default is `explicit`; do not automatically recall or persist anything unless the effective profile is `balanced` or `proactive`.
+Before any memory access, run `memory-store mode --json`. The safe default is `explicit`; do not automatically recall or persist anything unless the effective profile is `balanced` or `proactive`.
 
 1. **Recall When History Matters**:
    - Search first when the user references prior decisions, progress, preferences, debugging history, conventions, or task handoff. Search when an ongoing task lacks historical context; skip recall for self-contained questions with no historical dependency.
-   - Use `memory-store search --query "<key_terms>" --scope all --as-agent <agent-id> --limit 3 --stdout` when the package binary is available, or `node scripts/memory_cli.js ... --stdout` from this repository.
+   - Use `memory-store recall "<key_terms>" --as-agent <agent-id> --limit 3 --json` when the package binary is available, or `node scripts/memory_cli.js recall ... --json` from this repository.
    - Do not assume a hard-coded `~/.claude` location. The installer honors `CLAUDE_CONFIG_DIR` and `CODEX_CONFIG_DIR`, and other platforms use their own configuration roots.
    - For an explicit user request, pass `--intent explicit`. Policy-driven recall is allowed only in `balanced` or `proactive` and must pass `--intent automatic`.
 

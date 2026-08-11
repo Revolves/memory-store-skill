@@ -406,7 +406,7 @@ async function main(args = process.argv.slice(2)) {
     throw new Error("--list cannot be combined with install, update, check, or dry-run options.");
   }
   if (flags.memoryProfile && (flags.list || flags.update || flags.check)) {
-    throw new Error("--memory-profile is available only during installation; use `memory-store config set` afterward.");
+    throw new Error("--memory-profile is available only during installation; use `memory-store mode <profile>` afterward.");
   }
 
   if (flags.help) {

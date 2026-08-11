@@ -60,7 +60,7 @@ const MEMORY_PROFILES = {
 
 // Authoritative fallback version. MUST match package.json "version".
 // Used when package.json is not present (e.g. deployed skill dir without it).
-const VERSION = "1.0.5";
+const VERSION = "1.1.0";
 
 // Legacy platform-specific global stores (pre-v2.8). Used only by `migrate`
 // to discover and consolidate memories into the universal store.
@@ -660,7 +660,7 @@ function cmdStore(a) {
   );
 }
 
-function cmdSearch(a) {
+function searchMemories(a) {
   const scope = validateScope(a.scope || "all", { allowAll: true });
   const intent = (a.intent || "explicit").toLowerCase();
   validateEnum(intent, ["explicit", "automatic"], "intent");
@@ -715,7 +715,11 @@ function cmdSearch(a) {
       saveMemories(storePath, mems);
     }
   }
-  writeOutput(selected.map((r) => r.memory), a.output);
+  return selected.map((r) => r.memory);
+}
+
+function cmdSearch(a) {
+  writeOutput(searchMemories(a), a.output);
 }
 
 function cmdRecall(a) {
@@ -1239,6 +1243,351 @@ function cmdVersion(a) {
 }
 
 // ==============================================================================
+// Intent-oriented facade
+// ==============================================================================
+
+function packageVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).version || VERSION;
+  } catch (e) {
+    return VERSION;
+  }
+}
+
+function leadingPositionals(argv) {
+  const values = [];
+  for (const value of argv.slice(1)) {
+    if (value.startsWith("--")) break;
+    values.push(value);
+  }
+  return values;
+}
+
+function cmdModeFacade(argv, a) {
+  const [profile] = leadingPositionals(argv);
+  const scope = a.workspace ? "workspace" : a.global ? "global" : (profile ? "global" : "effective");
+  if (a.reset) {
+    cmdConfig({ action: "reset", scope: scope === "effective" ? "workspace" : scope, store_path: a.store_path, output: a.output });
+    return;
+  }
+  if (!profile) {
+    cmdConfig({ action: "show", scope, store_path: a.store_path, output: a.output });
+    return;
+  }
+  cmdConfig({ action: "set", profile, scope, store_path: a.store_path, output: a.output });
+}
+
+function cmdRememberFacade(argv, a) {
+  const positional = leadingPositionals(argv);
+  let type = "decision";
+  if (VALID_TYPES.includes(positional[0])) type = positional.shift();
+  const title = a.title || positional.shift();
+  const summary = a.summary || positional.join(" ");
+  const scope = a.global ? "global" : "workspace";
+  const visibility = a.private ? "private" : (scope === "global" ? "global" : "shared");
+  cmdStore({
+    ...a,
+    type,
+    title,
+    summary,
+    scope,
+    visibility,
+    intent: a.auto ? "automatic" : "explicit",
+  });
+}
+
+function cmdRecallFacade(argv, a) {
+  const value = a.id || a.query || leadingPositionals(argv).join(" ");
+  requireNonEmpty(value, "query-or-id");
+  if (a.id || /^mem_/.test(value)) {
+    cmdRecall({ ...a, id: value, scope: a.scope || "all" });
+    return;
+  }
+  cmdSearch({ ...a, query: value, scope: a.scope || "all", limit: a.limit || 5, intent: a.auto ? "automatic" : "explicit" });
+}
+
+function statusSnapshot(a = {}) {
+  const profile = effectiveMemoryConfig("workspace", a.store_path);
+  const paths = {
+    global: resolveStorePath(a.store_path, "global"),
+    workspace: resolveStorePath(a.store_path, "workspace"),
+  };
+  const counts = { global: 0, workspace: 0, total: 0 };
+  for (const scope of ["global", "workspace"]) {
+    counts[scope] = loadMemories(paths[scope]).filter((m) => canAccessMemory(defaults(m, scope), agentIdentity(a))).length;
+    counts.total += counts[scope];
+  }
+  return { version: packageVersion(), profile, paths, memories: counts };
+}
+
+function cmdStatusFacade(a) {
+  const snapshot = statusSnapshot(a);
+  if (a.json || a.stdout || a.output) {
+    writeOutput(snapshot, a.output);
+    return;
+  }
+  process.stdout.write(
+    `Memory Store v${snapshot.version}\n` +
+    `Mode: ${snapshot.profile.profile} (${snapshot.profile.source})\n` +
+    `Memories: ${snapshot.memories.total} (workspace ${snapshot.memories.workspace}, global ${snapshot.memories.global})\n` +
+    `Workspace: ${snapshot.paths.workspace}\n` +
+    `Global: ${snapshot.paths.global}\n`
+  );
+}
+
+function maintenancePreview(a = {}) {
+  const scope = validateScope(a.scope || "all", { allowAll: true });
+  const now = Date.now();
+  let active = 0;
+  let candidates = 0;
+  for (const [scopeName, storePath] of resolveTargetPaths(a.store_path, scope)) {
+    for (let memory of loadMemories(storePath)) {
+      memory = defaults(memory, scopeName);
+      if (!canAccessMemory(memory, agentIdentity(a))) continue;
+      active++;
+      const created = new Date(memory.created_at).getTime();
+      const ageDays = Number.isFinite(created) ? Math.max(0, (now - created) / 86400000) : 0;
+      const ttlExpired = Boolean(memory.ttl_days && ageDays >= memory.ttl_days);
+      const decayed = computeDecay(memory) < Number(a.min_decay ?? 0.15);
+      if (ttlExpired || decayed) candidates++;
+    }
+  }
+  return { applied: false, scope, active, candidates };
+}
+
+function cmdMaintainFacade(a) {
+  const preview = maintenancePreview(a);
+  if (a.apply) {
+    process.stdout.write(`Maintenance summary: ${preview.candidates} candidate(s) across ${preview.active} active memories.\n`);
+    cmdArchive({ ...a, scope: preview.scope, apply_decay: true });
+    return;
+  }
+  if (a.json || a.stdout || a.output) {
+    writeOutput(preview, a.output);
+    return;
+  }
+  process.stdout.write(
+    `Maintenance preview: ${preview.candidates} archive candidate(s) across ${preview.active} active memories.\n` +
+    "No changes were made. Run `memory-store maintain --apply` to apply safe archiving.\n"
+  );
+}
+
+async function cmdSetupFacade(argv, a) {
+  const installerArgs = [];
+  if (!a.sync && !a.check && !a.list && !a.help && !a.all && !a.agent && !a.target) {
+    fail("setup requires --agent, --target, or --all. Run `memory-store` for the guided setup menu.");
+  }
+  if (a.sync) installerArgs.push("--update");
+  if (a.check) installerArgs.push("--check");
+  if (a.list) installerArgs.push("--list");
+  if (a.dry_run) installerArgs.push("--dry-run");
+  if (a.all) installerArgs.push("--all");
+  if (a.agent) installerArgs.push("--agent", a.agent);
+  if (a.target) installerArgs.push("--target", a.target);
+  if (a.mode) installerArgs.push("--memory-profile", a.mode);
+  if (a.help) installerArgs.push("--help");
+  await require("./install.js").main(installerArgs);
+}
+
+function interactiveStatus(write) {
+  const snapshot = statusSnapshot();
+  write(
+    `\nMemory Store v${snapshot.version}\n` +
+    `Current mode: ${snapshot.profile.profile} (${snapshot.profile.source})\n` +
+    `Memories: ${snapshot.memories.total} (workspace ${snapshot.memories.workspace}, global ${snapshot.memories.global})\n` +
+    `Workspace: ${snapshot.paths.workspace}\n` +
+    `Global: ${snapshot.paths.global}\n`
+  );
+}
+
+async function interactiveSetup(ask, write) {
+  write("\nQuick setup\n  1. Install to an Agent\n  2. Sync an existing installation\n  0. Back\n");
+  const action = await ask("Choose [0-2]: ");
+  if (action === "0" || !["1", "2"].includes(action)) return;
+  const agentChoices = [
+    ["codex", "Codex"], ["claude", "Claude Code"], ["gemini", "Gemini CLI"],
+    ["opencode", "OpenCode"], ["workbuddy", "WorkBuddy"], ["cursor", "Cursor"],
+    ["windsurf", "Windsurf"], ["qoderworkcn", "QoderWorkCN"], ["trae-cn", "Trae CN"],
+  ];
+  write("Agent platform:\n");
+  agentChoices.forEach(([, label], index) => write(`  ${index + 1}. ${label}\n`));
+  const selectedAgent = await ask("Choose [1-9]: ");
+  const target = agentChoices[Number(selectedAgent) - 1]?.[0];
+  if (!target) {
+    write("Setup cancelled: choose a listed Agent platform.\n");
+    return;
+  }
+  let profile = null;
+  if (action === "1") {
+    write("Memory mode: 1. explicit (recommended)  2. balanced  3. proactive  4. off\n");
+    const selected = await ask("Choose [1-4] (default 1): ");
+    profile = ({ "1": "explicit", "2": "balanced", "3": "proactive", "4": "off" })[selected || "1"] || "explicit";
+  }
+  write(
+    `\nSetup summary\n- Action: ${action === "1" ? "install" : "sync local package"}\n` +
+    `- Agent: ${target}\n${profile ? `- Memory mode: ${profile}\n` : ""}` +
+    "- Network access: none\n"
+  );
+  const confirmed = await ask("Proceed? [y/N]: ");
+  if (confirmed.toLowerCase() !== "y") {
+    write("Setup cancelled.\n");
+    return;
+  }
+  const args = ["setup", "--agent", target];
+  if (action === "2") args.push("--sync");
+  if (profile) args.push("--mode", profile);
+  await cmdSetupFacade(args, parseArgs(args.slice(1)));
+}
+
+async function interactiveSearch(ask, write) {
+  const query = (await ask("\nSearch query: ")).trim();
+  if (!query) {
+    write("Search cancelled.\n");
+    return;
+  }
+  write("Scope: 1. all  2. workspace  3. global\n");
+  const scope = ({ "2": "workspace", "3": "global" })[await ask("Choose [1-3] (default 1): ")] || "all";
+  const results = searchMemories({ query, scope, limit: 5, intent: "explicit" });
+  if (!results.length) {
+    write("No matching memories.\n");
+    return;
+  }
+  write("\nResults:\n");
+  results.forEach((memory, index) => write(`  ${index + 1}. ${memory.title} [${memory.type}]\n     ${memory.summary}\n`));
+}
+
+async function interactiveRemember(ask, write) {
+  write("\nMemory type: 1. decision  2. preference  3. workflow  4. debug solution  5. fact\n");
+  const type = ({ "2": "preference", "3": "workflow", "4": "debug_solution", "5": "fact" })[
+    await ask("Choose [1-5] (default 1): ")
+  ] || "decision";
+  const title = (await ask("Title: ")).trim();
+  const summary = (await ask("Summary: ")).trim();
+  if (!title || !summary) {
+    write("Add cancelled: title and summary are required.\n");
+    return;
+  }
+  write("Store in: 1. current workspace (shared)  2. global  3. current workspace (private)\n");
+  const destination = await ask("Choose [1-3] (default 1): ");
+  const scope = destination === "2" ? "global" : "workspace";
+  const visibility = destination === "3" ? "private" : (scope === "global" ? "global" : "shared");
+  let agentId = process.env.MEMORY_AGENT_ID || null;
+  if (visibility === "private" && !agentId) agentId = (await ask("Agent ID for private access: ")).trim();
+  write(
+    `\nMemory summary\n- Type: ${type}\n- Title: ${title}\n- Scope: ${scope}\n` +
+    `- Visibility: ${visibility}\n- Data path: ${resolveStorePath(null, scope)}\n`
+  );
+  const confirmed = await ask("Save this memory? [y/N]: ");
+  if (confirmed.toLowerCase() !== "y") {
+    write("Add cancelled.\n");
+    return;
+  }
+  if (visibility === "private" && !agentId) {
+    write("Add cancelled: private memories require an Agent ID.\n");
+    return;
+  }
+  cmdStore({ type, title, summary, scope, visibility, agent_id: agentId, intent: "explicit" });
+}
+
+async function interactiveMode(ask, write) {
+  const current = effectiveMemoryConfig("workspace");
+  write(`\nCurrent mode: ${current.profile} (${current.source})\nApply to:\n  1. Current workspace\n  2. Global default\n  3. Remove workspace override\n  0. Back\n`);
+  const target = await ask("Choose [0-3]: ");
+  if (target === "0" || !["1", "2", "3"].includes(target)) return;
+  if (target === "3") {
+    const configPath = path.join(resolveStorePath(null, "workspace"), "config.json");
+    write(`\nChange summary\n- Remove workspace override: ${configPath}\n`);
+    if ((await ask("Apply change? [y/N]: ")).toLowerCase() !== "y") {
+      write("Change cancelled.\n");
+      return;
+    }
+    if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
+    write("Workspace override removed.\n");
+    return;
+  }
+  write("Mode: 1. off  2. explicit  3. balanced  4. proactive\n");
+  const profile = ({ "1": "off", "2": "explicit", "3": "balanced", "4": "proactive" })[
+    await ask("Choose [1-4]: ")
+  ];
+  if (!profile) {
+    write("Change cancelled.\n");
+    return;
+  }
+  const scope = target === "1" ? "workspace" : "global";
+  write(`\nChange summary\n- Scope: ${scope}\n- Mode: ${profile}\n- Path: ${path.join(resolveStorePath(null, scope), "config.json")}\n`);
+  if ((await ask("Apply change? [y/N]: ")).toLowerCase() !== "y") {
+    write("Change cancelled.\n");
+    return;
+  }
+  writeMemoryConfig(scope, null, profile);
+  write(`Memory mode changed to ${profile} for ${scope}.\n`);
+}
+
+async function interactiveMaintenance(ask, write) {
+  const preview = maintenancePreview({ scope: "all" });
+  write(
+    `\nMaintenance preview\n- Active memories: ${preview.active}\n` +
+    `- Archive candidates: ${preview.candidates}\n- No changes have been made.\n`
+  );
+  if (!preview.candidates) return;
+  if ((await ask("Apply safe archive? [y/N]: ")).toLowerCase() !== "y") {
+    write("Maintenance cancelled.\n");
+    return;
+  }
+  write(`Maintenance summary: archive ${preview.candidates} candidate(s) from both stores.\n`);
+  cmdArchive({ scope: "all", apply_decay: true });
+}
+
+async function runInteractive({ ask, write = (text) => process.stdout.write(text) }) {
+  write("\nMemory Store\n");
+  while (true) {
+    write(
+      "\n1. Quick setup\n2. Search memories\n3. Add a memory\n" +
+      "4. Change memory mode\n5. View status\n6. Maintenance preview\n0. Exit\n"
+    );
+    const choice = (await ask("Choose [0-6]: ")).trim();
+    if (choice === "0") {
+      write("Goodbye.\n");
+      return;
+    }
+    if (choice === "1") await interactiveSetup(ask, write);
+    else if (choice === "2") await interactiveSearch(ask, write);
+    else if (choice === "3") await interactiveRemember(ask, write);
+    else if (choice === "4") await interactiveMode(ask, write);
+    else if (choice === "5") interactiveStatus(write);
+    else if (choice === "6") await interactiveMaintenance(ask, write);
+    else write("Choose a number from 0 to 6.\n");
+  }
+}
+
+async function runTerminalMenu() {
+  const readline = require("readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  let interrupted = false;
+  let pendingResolve = null;
+  rl.on("SIGINT", () => {
+    interrupted = true;
+    process.stdout.write("\n");
+    if (pendingResolve) pendingResolve("0");
+  });
+  const ask = (question) => {
+    if (interrupted) return Promise.resolve("0");
+    return new Promise((resolve) => {
+      pendingResolve = resolve;
+      rl.question(question, (answer) => {
+        pendingResolve = null;
+        resolve(answer);
+      });
+    });
+  };
+  try {
+    await runInteractive({ ask });
+  } finally {
+    rl.close();
+  }
+}
+
+// ==============================================================================
 // CLI parser & main
 // ==============================================================================
 
@@ -1260,19 +1609,38 @@ function parseArgs(argv) {
   return args;
 }
 
-function main() {
-  const argv = process.argv.slice(2);
+function printCompactHelp() {
+  process.stdout.write(
+    "Memory Store — run without arguments in a terminal for the guided menu.\n" +
+    "Usage: memory-store <command> [options]\n" +
+    "  remember   Add a memory with safe defaults\n" +
+    "  recall     Search memories or open one by ID\n" +
+    "  mode       View or change the memory profile\n" +
+    "  status     Show profile, paths, and counts\n" +
+    "  setup      Install or sync the skill explicitly\n" +
+    "  maintain   Preview maintenance candidates\n" +
+    "Run `memory-store help --advanced` for the compatible low-level commands.\n"
+  );
+}
+
+function printAdvancedHelp() {
+  process.stdout.write(
+    "Memory Store advanced commands (v1 compatible):\n" +
+    "  init config store search recall list update delete merge archive restore revive stats compress migrate version\n" +
+    "Usage: memory-store <command> [--key value ...]\n" +
+    "Output defaults to stdout; use --output <file> to write JSON to a file.\n" +
+    "Docs: see references/cli.md relative to the skill directory.\n"
+  );
+}
+
+async function main(argv = process.argv.slice(2)) {
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
-    process.stdout.write(
-      "Memory Store CLI (Node.js). Commands:\n" +
-      "  init config store search recall list update delete merge archive restore revive stats compress migrate version\n" +
-      "Usage: memory-store <command> [--key value ...]\n" +
-"       node scripts/memory_cli.js <command> [--key value ...]\n" +
-      "Output: results print as JSON to stdout by default; use --output <file> to write a file.\n" +
-      "        --stdout forces stdout explicitly. --type accepts comma-separated values.\n" +
-      "        version / -v / --version prints the installed version.\n" +
-      "Docs: see SKILL.md (relative to the skill directory)\n"
-    );
+    if (argv.length === 0 && process.stdin.isTTY && process.stdout.isTTY) {
+      await runTerminalMenu();
+      return;
+    }
+    if (argv.includes("--advanced")) printAdvancedHelp();
+    else printCompactHelp();
     return;
   }
   if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "version") {
@@ -1285,6 +1653,14 @@ function main() {
   // --stdout forces JSON to stdout (no file). Output already defaults to stdout
   // when --output is omitted; this makes the intent explicit.
   if (a.stdout) delete a.output;
+  if (command === "mode") return cmdModeFacade(argv, a);
+  if (command === "remember") return cmdRememberFacade(argv, a);
+  if (command === "recall" && !a.id && !argv.slice(1).some((value) => value === "--id")) {
+    return cmdRecallFacade(argv, a);
+  }
+  if (command === "status") return cmdStatusFacade(a);
+  if (command === "maintain") return cmdMaintainFacade(a);
+  if (command === "setup") return cmdSetupFacade(argv, a);
   const handlers = {
     init: cmdInit,
     config: cmdConfig,
@@ -1310,4 +1686,11 @@ function main() {
   handlers[command](a);
 }
 
-main();
+if (require.main === module) {
+  main().catch((error) => {
+    process.stderr.write(`Error: ${error.message}\n`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { main, runInteractive };

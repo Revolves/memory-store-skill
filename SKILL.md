@@ -13,7 +13,7 @@ description: >-
 每次准备访问或写入记忆时，先读取有效配置：
 
 ```bash
-node scripts/memory_cli.js config show --scope effective --stdout
+node scripts/memory_cli.js mode --json
 ```
 
 | profile | 自动检索 | 自动存储 | 单次对话上限 |
@@ -40,20 +40,20 @@ node scripts/memory_cli.js config show --scope effective --stdout
 从本 skill 目录执行；需要 Node.js 18 或更高版本。
 
 ```bash
-node scripts/memory_cli.js version
+node scripts/memory_cli.js status
 ```
 
-命令默认把 JSON 写到 stdout；只有需要落盘时才使用 `--output <file>`。`--stdout` 可显式要求 stdout。
+人类用户在真实终端中无参数运行 `memory-store` 时使用数字菜单。Agent、脚本与 CI 始终使用明确短命令，不依赖交互；无 TTY 且无参数时 CLI 只输出精简帮助并退出。
+
+优先使用 `remember`、`recall`、`mode` 和 `status`。只有需要精确过滤、归档恢复等高级能力时才使用 `help --advanced` 中的 v1 兼容命令。
 
 ### 检索
 
 从请求提取 2–3 个稳定关键词，并始终带当前 Agent 身份：
 
 ```bash
-node scripts/memory_cli.js search \
-  --query "数据库 选型" --scope all \
-  --type decision,debug_solution \
-  --as-agent <agent-id> --intent explicit --limit 5 --stdout
+node scripts/memory_cli.js recall "数据库 选型" \
+  --as-agent <agent-id> --json
 ```
 
 任务交接优先检索工作区共享记忆：
@@ -75,15 +75,13 @@ node scripts/memory_cli.js search \
 3. 若不记录，关键信息会丢失吗？
 
 ```bash
-node scripts/memory_cli.js store \
-  --type decision \
-  --title "数据库选型" \
-  --summary "选择 SQLite；当前为单用户本地场景，无需独立数据库服务。" \
-  --tags "database,architecture" \
-  --importance 0.85 --priority P1 \
-  --scope workspace --visibility shared \
-  --agent-id <agent-id> --intent explicit --stdout
+node scripts/memory_cli.js remember decision \
+  "数据库选型" \
+  "选择 SQLite；当前为单用户本地场景，无需独立数据库服务。" \
+  --workspace --agent-id <agent-id>
 ```
+
+`remember` 默认使用 `workspace + shared + explicit`；加 `--global` 写入跨项目全局记忆，加 `--private` 时必须提供稳定 Agent 身份。策略触发的自动存储使用 `--auto --source-conv-id <id>`，CLI 仍会执行档位限制。
 
 不要存原始对话全文。单次对话通常不超过 5 条；优先更新既有记忆，避免重复。
 
@@ -121,7 +119,7 @@ node scripts/memory_cli.js store \
 
 ## 按需读取参考资料
 
-- 需要完整命令、参数、输出与归档恢复操作时，读取 [references/cli.md](references/cli.md)。
+- 需要短命令、完整兼容命令、参数、输出与归档恢复操作时，读取 [references/cli.md](references/cli.md)。
 - 需要维护策略、隐私模型、并发限制、损坏恢复和备份建议时，读取 [references/operations.md](references/operations.md)。
 - 需要直接处理数据格式或验证字段时，读取 [references/memory_schema.json](references/memory_schema.json)。
 

@@ -14,7 +14,7 @@ Agent 负责识别值得保留的决策、排障、偏好、流程和状态；�
 
 ```bash
 npm i memory-store-skill
-npx memory-store-install --agent codex --memory-profile explicit
+npx memory-store setup --agent codex --mode explicit
 ```
 
 npm 包安装不会运行生命周期脚本，也不会自动修改任何 Agent 目录。第二条显式命令才会把 skill 安装到 Codex；安装完成后，请新开一个 Agent 会话，让平台重新发现 skill。
@@ -28,8 +28,8 @@ npx memory-store version
 如果需要查看平台标识或安装到其他平台：
 
 ```bash
-npx memory-store-install --list
-npx memory-store-install --agent codex
+npx memory-store setup --list
+npx memory-store setup --agent codex
 ```
 
 其他平台标识包括 `claude`、`gemini`、`opencode`、`workbuddy`、`cursor`、`windsurf`、`qoderworkcn` 和 `trae-cn`。
@@ -46,30 +46,30 @@ npx memory-store-install --agent codex
 安装后可以查看或修改全局策略，也可以设置当前工作区覆盖：
 
 ```bash
-npx memory-store config show
-npx memory-store config set --profile balanced --scope global
-npx memory-store config set --profile explicit --scope workspace
-npx memory-store config reset --scope workspace
+npx memory-store mode
+npx memory-store mode balanced --global
+npx memory-store mode explicit --workspace
+npx memory-store mode --reset --workspace
 ```
 
 ## 更新
 
 ```bash
 npm i memory-store-skill@latest
-npx memory-store-update
+npx memory-store setup --sync
 ```
 
 第一条命令由用户显式升级 npm 包；更新器只从当前本地包同步已经安装的 skill，复制后自动校验文件，不会下载或执行远程代码、修改记忆数据，也不会把未安装的平台变成新安装。
 
 ```bash
 # 只预览，不写入
-npx memory-store-update --dry-run
+npx memory-store setup --sync --dry-run
 
 # 只更新指定平台
-npx memory-store-update --agent codex
+npx memory-store setup --sync --agent codex
 
 # 更新自定义安装目录
-npx memory-store-update --target /path/to/memory-store
+npx memory-store setup --sync --target /path/to/memory-store
 ```
 
 更新完成后请新开 Agent 会话。源码用户也可以在仓库中运行 `node scripts/install.js --update`，用当前源码刷新已有安装。
@@ -102,45 +102,35 @@ node scripts/install.js --all
 
 以下示例使用 npm 提供的 CLI，无需进入 skill 安装目录。
 
-### 1. 确认版本
+### 1. 打开交互终端
 
 ```bash
-npx memory-store version
+npx memory-store
 ```
 
-命令会输出当前安装版本；本仓库源码版本见 `package.json`。
+在真实终端中，无参数命令会打开数字菜单。安装、搜索、添加记忆、切换档位、查看状态和维护预览都可以通过选择完成；写入前会展示摘要并以 `[y/N]` 确认。非 TTY 环境只输出精简帮助，不会等待输入。
 
 ### 2. 存储工作区决策
 
 ```bash
-npx memory-store store \
-  --type decision \
-  --title "数据库选型" \
-  --summary "选择 SQLite；当前为单用户本地部署。" \
-  --tags "database,architecture" \
-  --importance 0.85 --priority P1 \
-  --scope workspace --visibility shared \
-  --agent-id agent-a --stdout
+npx memory-store remember decision "数据库选型" "选择 SQLite；当前为单用户本地部署" --workspace
 ```
 
 ### 3. 检索
 
 ```bash
-npx memory-store search \
-  --query "数据库 选型" --scope all \
-  --type decision,debug_solution \
-  --as-agent agent-a --limit 5 --stdout
+npx memory-store recall "数据库 选型" --json
 ```
 
 默认已经输出 JSON 到 stdout；`--stdout` 只是显式写法。需要文件时使用 `--output result.json`。
 
-### 4. 交接给其他 Agent
+### 4. 查看状态
 
 ```bash
-npx memory-store search \
-  --query "任务主题 进度" --scope workspace \
-  --visibility shared,global --as-agent agent-b --limit 10 --stdout
+npx memory-store status
 ```
+
+Agent 与 CI 可直接使用 `remember`、`recall`、`mode`、`status`；这些命令不会启动交互。完整底层参数仍兼容，可通过 `npx memory-store help --advanced` 查看。
 
 ## Agent 何时检索
 
@@ -154,19 +144,12 @@ working memory 不能替代对具体历史的检索。若记忆库无命中，�
 
 | 命令 | 用途 |
 |---|---|
-| `init` | 初始化 global 或 workspace 存储 |
-| `store` | 写入结构化记忆 |
-| `search` | 跨层搜索与过滤 |
-| `recall` | 按 ID 读取并记录访问 |
-| `list` | 列出 active 或 archived 记忆 |
-| `update` | 更新记忆字段 |
-| `delete` | 删除 active 记忆 |
-| `merge` | 合并确认重复的 active 记忆 |
-| `archive` | 将过期/低价值记忆移出主库 |
-| `restore` | 将归档记忆恢复到主库（`revive` 为兼容别名） |
-| `stats` | 查看分布与数量 |
-| `compress` | 从 transcript 提取候选片段 |
-| `migrate` | 迁移旧版全局存储 |
+| `remember` | 用安全默认值新增记忆 |
+| `recall` | 按关键词搜索，或按 `mem_...` ID 查看 |
+| `mode` | 查看或调整记忆档位 |
+| `status` | 查看版本、档位、路径和数量 |
+| `setup` | 显式安装或同步本地包 |
+| `maintain` | 默认只预览归档候选；`--apply` 才执行 |
 
 完整参数见 [references/cli.md](references/cli.md)，维护、隐私、并发与恢复边界见 [references/operations.md](references/operations.md)。
 

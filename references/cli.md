@@ -1,10 +1,11 @@
 # CLI Reference
 
-Memory Store v1.0.5 uses `node scripts/memory_cli.js <command>`. Run commands from the installed skill directory with Node.js 18 or newer.
+Memory Store v1.1.0 uses `memory-store <command>` (or `node scripts/memory_cli.js <command>` from the installed skill directory) with Node.js 18 or newer.
 
 ## Contents
 
 - [Install and update the skill](#install-and-update-the-skill)
+- [Guided terminal and short commands](#guided-terminal-and-short-commands)
 - [Configure the memory policy](#configure-the-memory-policy)
 - [Output and identity](#output-and-identity)
 - [Initialize and store](#initialize-and-store)
@@ -20,35 +21,74 @@ Install the npm package, then explicitly install the skill for a platform:
 
 ```bash
 npm i memory-store-skill
-npx memory-store-install --agent codex --memory-profile explicit
+npx memory-store setup --agent codex --mode explicit
 ```
 
 To update, explicitly upgrade the npm package and then sync existing Agent-platform copies:
 
 ```bash
 npm i memory-store-skill@latest
-npx memory-store-update
+npx memory-store setup --sync
 ```
 
 npm installation has no lifecycle installer and does not modify Agent directories. The updater reads only from the current local package, updates existing installations, verifies copied artifacts, and does not download or execute remote code or modify memory data.
 
 ```bash
-npx memory-store-update --dry-run
-npx memory-store-update --agent codex
-npx memory-store-update --target /path/to/memory-store
+npx memory-store setup --sync --dry-run
+npx memory-store setup --sync --agent codex
+npx memory-store setup --sync --target /path/to/memory-store
 ```
 
 From a source checkout, run `node scripts/install.js --update` with the same selectors to refresh existing installations from that checkout. `--update` fails instead of creating a missing target.
+
+The legacy `memory-store-install` and `memory-store-update` binaries remain compatible throughout v1.x.
+
+## Guided terminal and short commands
+
+Run without arguments in a real terminal to open the zero-dependency numbered menu:
+
+```bash
+memory-store
+```
+
+It covers setup, search, adding a memory, profile changes, status, and maintenance preview. Interactive writes print a summary and require an explicit `y`; Enter cancels. When stdin or stdout is not a TTY, no-argument execution prints compact help and exits without waiting.
+
+Use the intent-oriented commands for Agents, CI, and direct terminal commands:
+
+```bash
+# workspace + shared + explicit by default
+memory-store remember decision "Database choice" "Use SQLite for local single-user deployment" --workspace
+
+# text searches all stores; a mem_... value recalls one record
+memory-store recall "database choice" --json
+memory-store recall mem_xxx --json
+
+# effective profile, global default, and workspace override
+memory-store mode
+memory-store mode balanced --global
+memory-store mode explicit --workspace
+memory-store mode --reset --workspace
+
+# combined version/profile/path/count view
+memory-store status
+memory-store status --json
+
+# preview by default; mutate only with --apply
+memory-store maintain
+memory-store maintain --apply
+```
+
+`remember` accepts the memory type as its first positional value and defaults to `decision`. Use `--global` for `global + global`, or `--private --agent-id <id>` for a private workspace record. `--auto --source-conv-id <id>` maps to policy-governed automatic storage. The facade hides routine `scope + visibility + intent + stdout` combinations; advanced flags and v1 commands remain available through `memory-store help --advanced`.
 
 ## Configure the memory policy
 
 The effective profile is the workspace profile when present, otherwise the global profile, otherwise the safe `explicit` default.
 
 ```bash
-node scripts/memory_cli.js config show --scope effective --stdout
-node scripts/memory_cli.js config set --profile balanced --scope global --stdout
-node scripts/memory_cli.js config set --profile explicit --scope workspace --stdout
-node scripts/memory_cli.js config reset --scope workspace --stdout
+memory-store mode --json
+memory-store mode balanced --global --json
+memory-store mode explicit --workspace --json
+memory-store mode --reset --workspace --json
 ```
 
 Profiles are `off`, `explicit`, `balanced`, and `proactive`. Explicit user requests use `--intent explicit`. Policy-driven `search` and `store` calls use `--intent automatic`; automatic stores also require `--source-conv-id`. The CLI enforces allowed types and per-conversation limits for automatic writes.

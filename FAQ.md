@@ -52,7 +52,7 @@ node scripts/memory_cli.js search --query "部署流程" --scope all \
 
 ## 8. 输出必须写文件吗？
 
-不需要。v1.0.5 默认把 JSON 写到 stdout；`--stdout` 是显式形式。只有确实需要中间文件时才用 `--output result.json`。
+不需要。v1.1.0 默认把 JSON 写到 stdout；短命令可使用 `--json` 明确要求机器可读输出。只有确实需要中间文件时才用 `--output result.json`。
 
 ```bash
 node scripts/memory_cli.js search --query "部署" --scope all --stdout
@@ -82,7 +82,7 @@ node scripts/memory_cli.js restore --id mem_xxx --as-agent agent-a --stdout
 
 ## 11. `archive --scope all` 支持吗？
 
-支持，v1.0.5 会处理 global 与 workspace 两层。也可以分别执行，便于使用不同阈值：
+支持，v1.1.0 会处理 global 与 workspace 两层。也可以分别执行，便于使用不同阈值：
 
 ```bash
 node scripts/memory_cli.js archive --scope all \
@@ -115,14 +115,14 @@ CLI 会失败关闭并返回非零退出码，不会把损坏文件当成空库�
 
 ```bash
 npm i memory-store-skill
-npx memory-store-install --agent codex
+npx memory-store setup --agent codex --mode explicit
 
 # 更新时
 npm i memory-store-skill@latest
-npx memory-store-update
+npx memory-store setup --sync
 ```
 
-npm 安装本身不运行生命周期脚本，也不修改 Agent 目录。`memory-store-update` 只从当前本地包同步已有 skill 安装并校验文件，不下载或执行远程代码，也不修改记忆数据。可用 `--dry-run` 预览，或用 `--agent codex`、`--target <path>` 限定目标。更新后请新开 Agent 会话。
+npm 安装本身不运行生命周期脚本，也不修改 Agent 目录。`memory-store setup` / `setup --sync` 只复用当前本地包的安装器，不下载远程代码、不启动子进程，也不修改记忆数据。可用 `--dry-run` 预览，或用 `--agent codex`、`--target <path>` 限定目标。旧 `memory-store-install` / `memory-store-update` 入口在 v1.x 中继续兼容。更新后请新开 Agent 会话。
 
 从源码安装或更新：
 
@@ -142,13 +142,19 @@ node scripts/install.js --update
 安装时传入 `--memory-profile off|explicit|balanced|proactive`；未指定时使用安全默认值 `explicit`，而且安装器不会创建记忆数据文件。
 
 ```bash
-npx memory-store config show
-npx memory-store config set --profile balanced --scope global
-npx memory-store config set --profile explicit --scope workspace
-npx memory-store config reset --scope workspace
+npx memory-store mode
+npx memory-store mode balanced --global
+npx memory-store mode explicit --workspace
+npx memory-store mode --reset --workspace
 ```
 
 工作区策略优先于全局策略。`off` 和 `explicit` 会拒绝 `--intent automatic` 的访问；`balanced` 每次对话最多自动保留 3 条精选类型，`proactive` 最多 5 条。用户明确要求的操作使用 `--intent explicit`，不受自动策略限制。
+
+## 19. 无参数命令会不会阻塞 Agent 或 CI？
+
+不会。只有 stdin 和 stdout 都连接真实 TTY 时，`memory-store` 无参数才打开数字菜单。管道、CI 和 Agent 工具调用等非 TTY 环境会输出不超过 10 行的精简帮助并退出。传入 `remember`、`recall`、`mode`、`status`、`setup` 或 `maintain` 时也不会进入菜单。
+
+交互菜单中的安装、添加记忆、档位修改和归档都会先显示摘要，并以 `[y/N]` 确认；直接回车不会写入。
 
 ## 更多资料
 

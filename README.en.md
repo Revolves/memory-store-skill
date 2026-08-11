@@ -14,7 +14,7 @@ Node.js 18 or newer is required. The current release is available on npm:
 
 ```bash
 npm i memory-store-skill
-npx memory-store-install --agent codex --memory-profile explicit
+npx memory-store setup --agent codex --mode explicit
 ```
 
 Installing the npm package does not run lifecycle hooks or modify Agent directories. The explicit second command installs the skill for Codex. Start a new Agent session afterward so the platform can discover it.
@@ -28,8 +28,8 @@ npx memory-store version
 To inspect platform identifiers or install for another platform:
 
 ```bash
-npx memory-store-install --list
-npx memory-store-install --agent codex
+npx memory-store setup --list
+npx memory-store setup --agent codex
 ```
 
 Other identifiers include `claude`, `gemini`, `opencode`, `workbuddy`, `cursor`, `windsurf`, `qoderworkcn`, and `trae-cn`.
@@ -46,30 +46,30 @@ Other identifiers include `claude`, `gemini`, `opencode`, `workbuddy`, `cursor`,
 Inspect or change the global profile after installation, or add a workspace override:
 
 ```bash
-npx memory-store config show
-npx memory-store config set --profile balanced --scope global
-npx memory-store config set --profile explicit --scope workspace
-npx memory-store config reset --scope workspace
+npx memory-store mode
+npx memory-store mode balanced --global
+npx memory-store mode explicit --workspace
+npx memory-store mode --reset --workspace
 ```
 
 ## Update
 
 ```bash
 npm i memory-store-skill@latest
-npx memory-store-update
+npx memory-store setup --sync
 ```
 
 The first command explicitly upgrades the npm package. The updater then syncs only existing skill installations from that local package, verifies the copied files, and leaves memory data unchanged. It does not download or execute remote code or turn an uninstalled platform into a new installation.
 
 ```bash
 # Preview without writing
-npx memory-store-update --dry-run
+npx memory-store setup --sync --dry-run
 
 # Update one platform
-npx memory-store-update --agent codex
+npx memory-store setup --sync --agent codex
 
 # Update a custom installation directory
-npx memory-store-update --target /path/to/memory-store
+npx memory-store setup --sync --target /path/to/memory-store
 ```
 
 Start a new Agent session after updating. Source users can run `node scripts/install.js --update` in the repository to refresh existing installations from the current source.
@@ -102,45 +102,35 @@ Eight memory types are supported: `fact`, `decision`, `preference`, `workflow`, 
 
 The examples below use the npm CLI and do not require entering the installed skill directory.
 
-### 1. Confirm the version
+### 1. Open the guided terminal
 
 ```bash
-npx memory-store version
+npx memory-store
 ```
 
-The command prints the installed version; see `package.json` for the source version in this repository.
+With a real terminal, the no-argument command opens a numbered menu for setup, search, adding memories, profile changes, status, and maintenance preview. Every write shows a summary and defaults to cancellation. Without a TTY it prints compact help and exits without waiting.
 
 ### 2. Store a workspace decision
 
 ```bash
-npx memory-store store \
-  --type decision \
-  --title "Database choice" \
-  --summary "Use SQLite for the current local single-user deployment." \
-  --tags "database,architecture" \
-  --importance 0.85 --priority P1 \
-  --scope workspace --visibility shared \
-  --agent-id agent-a --stdout
+npx memory-store remember decision "Database choice" "Use SQLite for the local single-user deployment" --workspace
 ```
 
 ### 3. Search
 
 ```bash
-npx memory-store search \
-  --query "database choice" --scope all \
-  --type decision,debug_solution \
-  --as-agent agent-a --limit 5 --stdout
+npx memory-store recall "database choice" --json
 ```
 
 JSON is written to stdout by default; `--stdout` is only the explicit form. Use `--output result.json` when a file is useful.
 
-### 4. Hand off to another agent
+### 4. Inspect status
 
 ```bash
-npx memory-store search \
-  --query "task topic progress" --scope workspace \
-  --visibility shared,global --as-agent agent-b --limit 10 --stdout
+npx memory-store status
 ```
+
+Agents and CI can call `remember`, `recall`, `mode`, and `status` directly; explicit commands never open the menu. The compatible low-level interface remains available through `npx memory-store help --advanced`.
 
 ## When an agent should search
 
@@ -154,19 +144,12 @@ Platform working memory does not replace a targeted search for specific history.
 
 | Command | Purpose |
 |---|---|
-| `init` | initialize a global or workspace store |
-| `store` | write a validated structured memory |
-| `search` | search and filter across stores |
-| `recall` | fetch by ID and record access |
-| `list` | list active or archived memories |
-| `update` | update memory fields |
-| `delete` | delete an active memory |
-| `merge` | merge confirmed duplicate active memories |
-| `archive` | move stale or low-value memories out of the active store |
-| `restore` | restore an archived memory (`revive` is a compatibility alias) |
-| `stats` | inspect counts and distributions |
-| `compress` | extract candidates from a transcript |
-| `migrate` | consolidate legacy global stores |
+| `remember` | add a memory with safe defaults |
+| `recall` | search by text or inspect a `mem_...` ID |
+| `mode` | inspect or change the memory profile |
+| `status` | show version, profile, paths, and counts |
+| `setup` | explicitly install or sync the local package |
+| `maintain` | preview archive candidates; mutate only with `--apply` |
 
 See [references/cli.md](references/cli.md) for exact options and [references/operations.md](references/operations.md) for lifecycle, privacy, concurrency, backup, and recovery boundaries.
 

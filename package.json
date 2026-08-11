@@ -1,6 +1,6 @@
 {
   "name": "memory-store-skill",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "Conversation memory skill for multi-agent AI workflows — store, share, and recall across sessions and agents",
   "keywords": [
     "memory",
@@ -44,8 +44,9 @@
     "agents"
   ],
   "scripts": {
-    "test": "node test/smoke.js && node test/config_contract.js && node test/install_contract.js && node test/security_contract.js && node test/release_contract.js",
+    "test": "node test/smoke.js && node test/config_contract.js && node test/cli_experience_contract.js && node test/install_contract.js && node test/security_contract.js && node test/release_contract.js",
     "test:config": "node test/config_contract.js",
+    "test:cli": "node test/cli_experience_contract.js",
     "test:install": "node test/install_contract.js",
     "test:security": "node test/security_contract.js",
     "test:release": "node test/release_contract.js",
