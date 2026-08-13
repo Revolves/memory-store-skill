@@ -93,6 +93,9 @@ node scripts/memory_cli.js remember decision \
 | 跨项目稳定偏好或通用事实 | `global` | `global` |
 | 仅用于当前 Agent 的临时内容 | 与内容一致 | `private` |
 
+> [!IMPORTANT]
+> 针对项目层面的改动（代码重构、架构决策、排障等），**严禁使用 `--scope global`**，必须指定 `--scope workspace` (或 `--workspace`) 存入项目空间；只有跨项目通用习惯/规范才使用 `--scope global`。
+
 `private` 只是基于 `agent-id` 的**协作过滤**，不是加密、操作系统权限或可信安全边界。CLI 不会自动检测或脱敏密钥、凭据、令牌和个人信息；不要把秘密写入记忆库。访问 private 记忆时必须使用同一个 Agent 身份。
 
 ## 记录信号

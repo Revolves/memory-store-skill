@@ -60,7 +60,7 @@ const MEMORY_PROFILES = {
 
 // Authoritative fallback version. MUST match package.json "version".
 // Used when package.json is not present (e.g. deployed skill dir without it).
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 
 // Legacy platform-specific global stores (pre-v2.8). Used only by `migrate`
 // to discover and consolidate memories into the universal store.
